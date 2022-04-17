@@ -2,6 +2,7 @@ import struct
 import numpy as np
 from nativefields import *
 
+
 def test_pack_value():
     field = IntegerField(0)
     obj = pack_value(0xDEAD, field)
@@ -37,7 +38,7 @@ def test_struct():
 
     arr = np.arange(1, 10).reshape((3, 3))
 
-    assert TestStruct.get_size() == 4 + 8 + (3 * 3 * 2) + InnerStruct.get_size() + 10
+    assert TestStruct.min_size == 4 + 8 + (3 * 3 * 2) + InnerStruct.min_size + 10
     inst = TestStruct(value1=15, value2=90.2, value3=arr, ba=[3] * 10)
     assert inst.value1 == 15
     assert inst.value2 == 90.2

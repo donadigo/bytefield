@@ -40,7 +40,7 @@ class RGB(NativeStruct):
 class Marker(NativeStruct):
     marker = IntegerField(offset=0, size=2, signed=False)
     length = IntegerField(marker, size=2, signed=False)
-    identifier = StringField(length, 5, encoding='ascii')
+    identifier = StringField(length, length=5, encoding='ascii')
     version = IntegerField(identifier, size=2, signed=False)
     density = IntegerField(version, size=1, signed=False)
     x_density = IntegerField(version, size=2, signed=False)
@@ -51,7 +51,7 @@ class Marker(NativeStruct):
 
 class JPEGHeader(NativeStruct):
     soi = IntegerField(offset=0, size=2, signed=False)
-    marker = StructField(soi, Marker, visible=False)
+    marker = StructField(soi, Marker)
 
 with open('image.jpg', 'rb') as f:
     # Parse the JPEG header

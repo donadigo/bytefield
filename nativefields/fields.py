@@ -1,4 +1,5 @@
 from copy import deepcopy
+from enum import Enum
 import struct
 from typing import Iterable, Tuple
 import numpy as np
@@ -16,10 +17,15 @@ class StructField(NativeField):
         super().__init__(**kwargs)
 
     def _getvalue(self, native_struct: NativeStruct):
+        # We have to update both the data and master_offset of the inner struct:
+        # the inner data can come from user code and master_offset is dependant
+        # on the sizing of dynamic fields
         if not self.inner:
-            inner = self.struct_type(master_offset=self.offset)
-            self._setvalue(native_struct, inner)
+            self.inner = self.struct_type(native_struct.data)
+        else:
+            self.inner.data = native_struct.data
 
+        self.inner.master_offset = native_struct._calc_offset(self)
         return self.inner
 
     def _setvalue(self, native_struct: NativeStruct, value):
@@ -30,9 +36,8 @@ class StructField(NativeField):
 
         offset = native_struct._calc_offset(self)
         native_struct.data[offset:offset + self.size] = value.data[:]
+        value.data = bytearray()
         self.inner = deepcopy(value)
-        self.inner.data = native_struct.data
-        self.inner.master_offset = self.offset
 
 
 class SimpleField(NativeField):
@@ -68,11 +73,8 @@ class ByteArrayField(NativeField):
 
         super().__init__(**kwargs)
 
-    def resize(self, native_struct: NativeStruct, length: int):
-        old_size = self.size
+    def resize(self, length: int):
         self.size = length
-
-        native_struct._resize_data(self, old_size)
 
     def _getvalue(self, native_struct: NativeStruct):
         offset = native_struct._calc_offset(self)
@@ -84,7 +86,7 @@ class ByteArrayField(NativeField):
     def _setvalue(self, native_struct: NativeStruct, value):
         new_length = len(value)
         if self.is_instance and new_length != self.size:
-            self.resize(native_struct, new_length)
+            self._resize_with_data(native_struct, new_length)
         else:
             assert new_length == self.size, f'bytearray size {new_length} not matching, should be {self.size}'
 
@@ -98,16 +100,38 @@ class ByteArrayField(NativeField):
         native_struct.data[offset:offset + self.size] = value
 
 
+class Endianness(Enum):
+    NATIVE = 0,
+    LITTLE = 1,
+    BIG = 2
+
+
 class IntegerField(SimpleField):
-    def __init__(self, offset: Tuple[NativeField, int], signed: bool = True, size: int = 4, **kwargs):
+    def __init__(
+        self,
+        offset:
+        Tuple[NativeField, int],
+        signed: bool = True,
+        size: int = 4,
+        endianness: Endianness = Endianness.NATIVE,
+        **kwargs
+    ):
+        prefix = '@'
+        if endianness == Endianness.BIG:
+            prefix = '>'
+        elif endianness == Endianness.LITTLE:  # NOQA
+            prefix = '<'
+
         if size == 4:
-            super().__init__(offset, 'i' if signed else 'I', **kwargs)
+            super().__init__(offset, f'{prefix}i' if signed else f'{prefix}I', **kwargs)
         elif size == 2:
-            super().__init__(offset, 'h' if signed else 'H', **kwargs)
+            super().__init__(offset, f'{prefix}h' if signed else f'{prefix}H', **kwargs)
         elif size == 1:
-            super().__init__(offset, 'b' if signed else 'B', **kwargs)
+            super().__init__(offset, f'{prefix}b' if signed else f'{prefix}B', **kwargs)
+        elif size == 8:
+            super().__init__(offset, f'{prefix}q' if signed else f'{prefix}Q', **kwargs)
         else:
-            raise Exception('size has to be either 4, 2 or 1')
+            raise Exception('size has to be either 8, 4, 2 or 1')
 
 
 class DoubleField(SimpleField):
@@ -140,12 +164,9 @@ class StringField(SimpleField):
         else:
             super().__init__(offset, f'{length}s', **kwargs)
 
-    def resize(self, native_struct: NativeStruct, length: int):
-        old_size = self.size
+    def resize(self, length: int):
         self.size = length
         self.format = f'{self.size}s'
-
-        native_struct._resize_data(self, old_size)
 
     def _getvalue(self, native_struct: NativeStruct) -> str:
         return super()._getvalue(native_struct).decode(self.encoding)
@@ -153,7 +174,7 @@ class StringField(SimpleField):
     def _setvalue(self, native_struct: NativeStruct, value: str):
         new_length = len(value)
         if self.is_instance and new_length != self.size:
-            self.resize(native_struct, new_length)
+            self._resize_with_data(native_struct, new_length)
 
         return super()._setvalue(native_struct, value.encode(self.encoding))
 
@@ -181,12 +202,9 @@ class ArrayField(NativeField):
 
         self._update_size()
 
-    def resize(self, native_struct: NativeStruct, shape: Tuple[tuple, int]):
-        old_size = self.size
+    def resize(self, shape: Tuple[tuple, int]):
         self.shape = (shape,) if isinstance(shape, int) else shape[:]
-
         self._update_size()
-        native_struct._resize_data(self, old_size)
 
     def _update_size(self):
         self.size = self._elem_field.size * int(np.prod(self.shape))
@@ -200,12 +218,18 @@ class ArrayField(NativeField):
     def _getvalue(self, native_struct: NativeStruct) -> np.array:
         arr = np.empty(self.shape, dtype=object)
 
+        arr_offset = self.real_offset
+        is_struct_field = isinstance(self._elem_field, StructField)
+
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
-                self.real_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
+                arr_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
             )
 
-            arr[index] = self._elem_field._getvalue(native_struct)
+            if is_struct_field:
+                arr[index] = deepcopy(self._elem_field)._getvalue(native_struct)
+            else:
+                arr[index] = self._elem_field._getvalue(native_struct)
 
         return arr
 
@@ -215,14 +239,15 @@ class ArrayField(NativeField):
 
         value_shape = np.array(value).shape
         if self.is_instance and value_shape != self.shape:
-            self.resize(native_struct, value_shape)
+            self._resize_with_data(native_struct, value_shape)
 
         arr = np.empty(self.shape, dtype=object)
         arr[:] = value
 
+        arr_offset = self.real_offset
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
-                self.real_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
+                arr_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
             )
 
             self._elem_field._setvalue(native_struct, arr[index])
@@ -235,13 +260,10 @@ class VariableField(NativeField):
         self.child = None
         self.is_instance = True
 
-    def resize(self, native_struct: NativeStruct, child: NativeField):
-        old_size = self.size
+    def resize(self, child: NativeField):
         self.size = child.size
         self.child = child
         self.child.offset = self.offset
-
-        native_struct._resize_data(self, old_size)
 
     def _getvalue(self, native_struct: NativeStruct):
         if not self.child:

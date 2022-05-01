@@ -7,6 +7,51 @@ from nativefields.base import NativeStruct, NativeField
 
 
 class StructField(NativeField):
+    '''
+    A StructField provides a way to embed other native structs inside a native struct.
+
+    The data is stored as if the StructField was replaced with the fields from
+    the struct that this field holds: that is, the offset of the StructField equals
+    the first field of the inner struct + additional offset of the first field, if it
+    has any.
+
+    Internally, StructFields pass the bytearray data reference to the child struct and
+    set their master offset to the current offset of the StructField. This allows for
+    accessing inner fields with native syntax:
+
+        master_struct.inner_struct.inner_int_field = 5
+
+    However, this also means that the value of StructField (a NativeStruct instance),
+    is not valid after e.g. resizing a field inside the master struct:
+
+        class Inner(NativeStruct):
+            inner_int_field = IntegerField(offset=0)
+
+        class Master(NativeStruct):
+            bytes = ByteArrayField(offset=0, length=None)
+            inner_struct = StructField(offset=bytes, Inner)
+
+        master_struct = Master()
+        inner = master_struct.inner_struct
+        master_struct.resize('bytes', 8)
+
+        inner.inner_int_field = 5  # Invalid, the master struct changed its layout and
+                                   # the inner reference is now invalid
+
+        master_struct.inner_struct.inner_int_field = 5  # Valid, accessing inner structs this way always
+                                                        # makes sure they are valid
+
+        Attributes:
+            offset (Tuple[NativeField, int]): the offset of this field
+            struct_type (type): the NativeStruct type that this field holds
+            size (int): the size of this field in bytes
+            is_instance (bool): always True, the field is always only an instance field
+            inner: the inner struct that is being stored
+
+        Args:
+            offset (Tuple[NativeField, int]): the offset of this field
+            struct_type (type): the NativeStruct type that this field holds
+    '''
     def __init__(self, offset: Tuple[NativeField, int], struct_type: type, **kwargs):
         assert issubclass(struct_type, NativeStruct), 'struct_type must be an inheritant of type NativeStruct'
         self.offset = offset
@@ -41,6 +86,21 @@ class StructField(NativeField):
 
 
 class SimpleField(NativeField):
+    '''
+    A SimpleField is a base field to simple type fields such as IntegerField, FloatField,
+    DoubleField, StringField and BooleanField. SimpleField interprets the data
+    according to the struct module format provided by the user. Visit
+    https://docs.python.org/3/library/struct.html to view this format specification.
+
+    Attributes:
+        offset (Tuple[NativeField, int]): the offset of this field
+        format (str): the format this field uses to interpret the data
+        size (int): the size of this field in bytes
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        struct_format (str): the format this field should use to interpret the data
+    '''
     def __init__(self, offset: Tuple[NativeField, int], struct_format: str, **kwargs):
         self.offset = offset
         self.format = struct_format
@@ -267,13 +327,13 @@ class VariableField(NativeField):
 
     def _getvalue(self, native_struct: NativeStruct):
         if not self.child:
-            raise Exception('VariableField does not contain any field')
+            raise Exception('VariableField does not contain any field, call resize() with the field instance you want to store')
 
         return self.child._getvalue(native_struct)
 
     def _setvalue(self, native_struct: NativeStruct, value):
         if not self.child:
-            raise Exception('VariableField does not contain any field')
+            raise Exception('VariableField does not contain any field, call resize() with the field instance you want to store')
 
         val = self.child._setvalue(native_struct, value)
         self.size = self.child.size

@@ -157,7 +157,7 @@ class NativeField(ABC):
         For more details, see NativeField.get_real_offset.
 
         Returns:
-            the real offset, in bytes
+            int: the real offset, in bytes
         '''
         return self.get_real_offset()
 
@@ -174,7 +174,7 @@ class NativeField(ABC):
             exclude_invisible (bool): whether to exclude invisible fields, True by default
 
         Returns:
-            the offset of this field in the parent NativeStruct, in bytes
+            int: the offset of this field in the parent NativeStruct, in bytes
         '''
         return _translate_offset(self.offset, exclude_invisible)
 
@@ -284,6 +284,26 @@ class NativeStruct(metaclass=StructBase):
 
     @property
     def size(self):
+        '''
+        Returns the offset in bytes after the last field in the struct.
+
+        This size is not the size of the actual underlying bytearray data
+        you may have provided. The size is calculated as last_field.real_offset + last_field.size.
+        To retrieve the data size, access len(struct.data).
+
+        The property does not include hidden fields when calculating the size.
+
+        Note that with e.g:
+
+            class Struct(NativeStruct):
+                member = IntegerField(offset=4)
+
+        the size returned by this property is 8 and not 4, this is
+        because the last field of this struct ends at offset 8.
+
+        Returns:
+            int: the offset after the last field in the struct
+        '''
         last_field = getattr(self, self.__class__.last_field.property_name)
         if not last_field:
             return 0
@@ -291,6 +311,28 @@ class NativeStruct(metaclass=StructBase):
         return last_field.real_offset + last_field.size
 
     def resize(self, field_name: str, size):
+        '''
+        Resizes a field inside the struct to a new size.
+
+        Unlike the field.resize() method, in addition this method also
+        resizes the underlying data bytearray. Consequently, this
+        method should be only used when writing new data.
+
+        Non instance fields such as IntegerField or FloatField cannot be resized:
+        calling this method to resize a non instance field will result in an exception.
+
+        Dynamic fields such as ArrayField, StringField and ByteArrayField
+        manage their size automatically when changing their contents,
+        so it is not required to call this method when setting a new value.
+
+        The size parameter can be an arbitrary object that's type is specified
+        by the target field. For example, an ArrayField may be resized with a tuple
+        containing the array shape and a VariableField, another NativeField instance.
+
+        Args:
+            field_name (str): the field name of the field inside the NativeStruct
+            size: the new size to resize the field to, type dependant on the field being resized
+        '''
         try:
             field = getattr(self, f'{field_name}_field')
             if not field.is_instance:
@@ -303,10 +345,31 @@ class NativeStruct(metaclass=StructBase):
             raise Exception(f'Field with name "{field_name}" does not exist in class {self.__class__.__name__}')
 
     def check_overflow(self):
+        '''
+        Checks if the last field definition does not exceed the
+        size of the underlying data bytearray. Used to ensure
+        integrity when e.g. printing the struct.
+
+        The method throws an exception if self.size > len(self.data).
+        '''
         if self.size > len(self.data):
             raise Exception('Overflow detected: fields after resize take more size than the struct data')
 
     def _resize_data(self, resizing_field: NativeField, old_size: int):
+        '''
+        Resizes the underlying data bytearray in-place given the field
+        that is being resized and its old size.
+
+        The method adds or removes the bytes in the bytearray needed
+        to align the field to its the new size. If the field has
+        is growing, the field is right padded with zero bytes.
+        Similarly, if the field is shrinking, the bytes are removed
+        from the end of its data.
+
+        Args:
+            resizing_field (NativeField): the field that is being resized
+            old_size (int): the old size of the resizing field, in bytes
+        '''
         offset = self._calc_offset(resizing_field)
 
         # Make sure to modify in-place
@@ -320,10 +383,35 @@ class NativeStruct(metaclass=StructBase):
             del self.data[offset + old_size:]
             self.data.extend(rest)
 
-    def _calc_offset(self, native_field):
+    def _calc_offset(self, native_field: NativeField):
+        '''
+        Calculates the real offset for the provided field.
+
+        This method accounts for the master offset that may be
+        present in the NativeStruct that is containing this field,
+        returning how many bytes to skip in the bytearray
+        to arrive at the beginning of the field.
+
+        Args:
+            native_field (NativeField): the native field to calculate the offset for
+
+        Returns:
+            int: the calculated offset in bytes
+        '''
         return _translate_offset(self.master_offset, True) + native_field.real_offset
 
     def _print(self, indent_level: int) -> str:
+        '''
+        Constructs a human readable string that lists all
+        the fields of the struct and their current values.
+
+        Args:
+            indent_level (int): the indent level, used for printing
+                                nested structs
+
+        Returns:
+            str: the human readable string
+        '''
         tab = '\t' * indent_level
         r = ''
         for varname, value in vars(self.__class__).items():

@@ -268,9 +268,6 @@ class NativeStruct(metaclass=StructBase):
         for key in kwargs:
             setattr(self, key, kwargs[key])
 
-    def setattr_proxy(self, name, value):
-        raise Exception('aaaa')
-
     @property
     def size(self):
         '''

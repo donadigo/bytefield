@@ -352,7 +352,7 @@ def unpack_bytes(data: Tuple[bytearray, NativeStruct], field: NativeField):
     return field._getvalue(native_struct)
 
 
-def pack_value(value, field: NativeField):
+def pack_value(value, field: NativeField) -> NativeStruct:
     native_struct = NativeStruct(bytearray(field.min_offset + field.size))
     field._setvalue(native_struct, value)
     return native_struct

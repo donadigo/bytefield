@@ -19,8 +19,6 @@ class StructBase(type):
     are copied for each new instance.
 
     StructBase also adds additional attributes to the class type:
-    - has_instance_fields (bool): whether the type contains instance fields,
-      which extract data based on a specific NativeStruct instance
     - min_size (int): the minimum size the NativeStruct subclass requires
       to hold all of its members. Dynamically sized arrays are counted
       as having size of 0.
@@ -135,10 +133,12 @@ class NativeField(ABC):
     def resize(self, length):
         '''
         The resize method is called when the user requests that this field should
-        be resized.
+        be resized. Note that you should never call this method directly on the field,
+        instead use the resize() API in NativeStruct. This is because the NativeStruct
+        API ensures that the field is instanced specifically for the struct instance,
+        and that you are not modifying the size of fields in all existing struct instances.
 
-        Resizing involves updating the *size* attribute and calling native_struct._resize_data,
-        to actually resize the underlying bytearray. Note that resizing is only available for
+        Resizing involves updating the *size* attribute. Note that resizing is only available for
         instance based fields. That is, is_instance has to be set to True.
         '''
         pass
@@ -200,13 +200,20 @@ class NativeField(ABC):
         return getattr(native_struct, self.property_name)._setvalue(native_struct, value)
 
     def _resize_with_data(self, native_struct, value):
+        '''
+        Resizes the field including resizing the underyling
+        bytearray.
+
+        native_struct (NativeStruct): the target native struct that the field is in
+        value: the value to resize to
+        '''
         old_size = self.size
         self.resize(value)
         if old_size != self.size:
             native_struct._resize_data(self, old_size)
 
 
-def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool = True):
+def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool = True) -> int:
     '''
     Used by NativeField.get_min_offset to calculate the offset.
 
@@ -214,6 +221,9 @@ def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool =
         offset (Tuple[NativeField, int]): if NativeField, calculates the offset of the field,
                                           if int, returns this argument
         exclude_invisible (bool): whether to exclude invisible fields, True by default
+
+    Returns:
+        int: the minimum offset in bytes
     '''
     if isinstance(offset, int):
         return offset
@@ -239,8 +249,10 @@ class NativeStruct(metaclass=StructBase):
     which defines the additional offset of all the fields inside the struct.
     This is mainly used to internally implement nested structs.
 
-    If the struct contains any instance fields, all field objects inside the struct are copied
-    to the new instance.
+    A NativeStruct can contain instanced fields, which contain data specifc to a NativeStruct
+    instance. When an instanced field is accessed or written to, NativeStruct
+    will make sure to copy the field, so that information can be saved per
+    NativeStruct.
 
     You can also provide initial values for the NativeStruct instance inside the constructor.
     These will be reflected in the underlying bytearray immediately after construction.
@@ -352,7 +364,21 @@ class NativeStruct(metaclass=StructBase):
         if self.size > len(self.data):
             raise Exception('Overflow detected: fields after resize take more size than the struct data')
 
-    def _ensure_is_instanced(self, field: NativeField):
+    def _ensure_is_instanced(self, field: NativeField) -> NativeField:
+        '''
+        Ensures that a field is instanced within the native struct.
+
+        If the field is not an instance field, the provided field
+        is returned as is. If it is, deepcopy is called on
+        the field to perform a deep copy and the field
+        is assigned to the struct instance.
+
+        Args:
+            field (NativeField): the target field
+
+        Returns:
+            NativeField: either the same field, or a deepcopy of the field if it was instanced
+        '''
         struct_field = getattr(self, field.property_name)
         if field.is_instance and struct_field == field:
             copy = deepcopy(struct_field)
@@ -389,7 +415,7 @@ class NativeStruct(metaclass=StructBase):
             del self.data[offset + old_size:]
             self.data.extend(rest)
 
-    def calc_offset(self, native_field: NativeField):
+    def calc_offset(self, native_field: NativeField) -> int:
         '''
         Calculates the real offset for the provided field.
 
@@ -485,4 +511,4 @@ class NativeStruct(metaclass=StructBase):
 
     def __repr__(self) -> str:
         self.check_overflow()
-        return f'[{self.__class__.__name__} object at {hex(id(self))}]\n' + self._print(0)
+        return f'[{self.__class__.__name__} object at {hex(id(self))}]\n{self._print(0)}'

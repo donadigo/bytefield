@@ -66,11 +66,11 @@ class StructField(NativeField):
         # the inner data can come from user code and master_offset is dependant
         # on the sizing of dynamic fields
         if not self.inner:
-            self.inner = self.struct_type(native_struct.data)
+            self.inner = self.struct_type(native_struct.data, native_struct.calc_offset(self))
         else:
             self.inner.data = native_struct.data
+            self.inner.master_offset = native_struct.calc_offset(self)
 
-        self.inner.master_offset = native_struct.calc_offset(self)
         return self.inner
 
     def _setvalue(self, native_struct: NativeStruct, value):

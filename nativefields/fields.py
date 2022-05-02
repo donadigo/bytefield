@@ -329,13 +329,15 @@ class VariableField(NativeField):
 
     def _getvalue(self, native_struct: NativeStruct):
         if not self.child:
-            raise Exception('VariableField does not contain any field, call resize() with the field instance you want to store')
+            raise Exception('VariableField does not contain any field, '
+                            'call resize() with the field instance you want to store')
 
         return self.child._getvalue(native_struct)
 
     def _setvalue(self, native_struct: NativeStruct, value):
         if not self.child:
-            raise Exception('VariableField does not contain any field, call resize() with the field instance you want to store')
+            raise Exception('VariableField does not contain any field, '
+                            'call resize() with the field instance you want to store')
 
         val = self.child._setvalue(native_struct, value)
         self.size = self.child.size

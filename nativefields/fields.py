@@ -70,7 +70,7 @@ class StructField(NativeField):
         else:
             self.inner.data = native_struct.data
 
-        self.inner.master_offset = native_struct._calc_offset(self)
+        self.inner.master_offset = native_struct.calc_offset(self)
         return self.inner
 
     def _setvalue(self, native_struct: NativeStruct, value):
@@ -79,7 +79,7 @@ class StructField(NativeField):
         if self.size != old_size:
             native_struct._resize_data(self, old_size)
 
-        offset = native_struct._calc_offset(self)
+        offset = native_struct.calc_offset(self)
         native_struct.data[offset:offset + self.size] = value.data[:]
         value.data = bytearray()
         self.inner = deepcopy(value)
@@ -108,14 +108,14 @@ class SimpleField(NativeField):
         super().__init__(**kwargs)
 
     def _getvalue(self, native_struct: NativeStruct):
-        offset = native_struct._calc_offset(self)
+        offset = native_struct.calc_offset(self)
         if offset + self.size > len(native_struct.data):
             raise Exception('Failed to get value: field is out of bounds')
 
         return struct.unpack(self.format, native_struct.data[offset:offset + self.size])[0]
 
     def _setvalue(self, native_struct: NativeStruct, value):
-        offset = native_struct._calc_offset(self)
+        offset = native_struct.calc_offset(self)
         if offset + self.size > len(native_struct.data):
             raise Exception('Failed to set value: field is out of bounds')
 
@@ -131,13 +131,15 @@ class ByteArrayField(NativeField):
         else:
             self.size = length
 
+        self.is_instance = False
+
         super().__init__(**kwargs)
 
     def resize(self, length: int):
         self.size = length
 
     def _getvalue(self, native_struct: NativeStruct):
-        offset = native_struct._calc_offset(self)
+        offset = native_struct.calc_offset(self)
         if offset + self.size > len(native_struct.data):
             raise Exception('Failed to get value: field is out of bounds')
 
@@ -150,7 +152,7 @@ class ByteArrayField(NativeField):
         else:
             assert new_length == self.size, f'bytearray size {new_length} not matching, should be {self.size}'
 
-        offset = native_struct._calc_offset(self)
+        offset = native_struct.calc_offset(self)
         if offset + self.size > len(native_struct.data):
             raise Exception(
                 f'Failed to set value: field at offset {offset} and size {self.size} '
@@ -278,7 +280,7 @@ class ArrayField(NativeField):
     def _getvalue(self, native_struct: NativeStruct) -> np.array:
         arr = np.empty(self.shape, dtype=object)
 
-        arr_offset = self.real_offset
+        arr_offset = native_struct.calc_field_offset(self)
         is_struct_field = isinstance(self._elem_field, StructField)
 
         for index in np.ndindex(self.shape):
@@ -304,7 +306,7 @@ class ArrayField(NativeField):
         arr = np.empty(self.shape, dtype=object)
         arr[:] = value
 
-        arr_offset = self.real_offset
+        arr_offset = native_struct.calc_field_offset(self)
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
                 arr_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
@@ -344,11 +346,11 @@ def unpack_bytes(data: Tuple[bytearray, NativeStruct], field: NativeField):
     if isinstance(data, NativeStruct):
         return field._getvalue(data)
 
-    elem = NativeStruct(data)
-    return field._getvalue(elem)
+    native_struct = NativeStruct(data)
+    return field._getvalue(native_struct)
 
 
 def pack_value(value, field: NativeField):
-    elem = NativeStruct(bytearray(field.real_offset + field.size))
-    field._setvalue(elem, value)
-    return elem
+    native_struct = NativeStruct(bytearray(field.min_offset + field.size))
+    field._setvalue(native_struct, value)
+    return native_struct

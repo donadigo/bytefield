@@ -32,12 +32,6 @@ class StructBase(type):
         last_field = None
         max_field_offset = -1
 
-        has_instance_fields = False
-        for field in attrs.copy().values():
-            if isinstance(field, NativeField) and field.is_instance:
-                has_instance_fields = True
-                break
-
         for key, field in attrs.copy().items():
             if not isinstance(field, NativeField):
                 continue
@@ -48,20 +42,19 @@ class StructBase(type):
                                     'To resolve, rename the field to something else')
 
             field.property_name = f'{key}_field'
-            if has_instance_fields:
+            if field.is_instance:
                 attrs[key] = property(field._get_instance_value, field._set_instance_value)
             else:
                 attrs[key] = property(field._getvalue, field._setvalue)
 
             attrs[field.property_name] = field
-            field_offset = field.get_real_offset(False)
+            field_offset = field.get_min_offset(False)
             struct_size = max(struct_size, field_offset + field.size)
 
             if field_offset > max_field_offset or (field_offset == max_field_offset and field.offset == last_field):
                 last_field = field
                 max_field_offset = field_offset
 
-        attrs['has_instance_fields'] = has_instance_fields
         attrs['min_size'] = struct_size
         attrs['last_field'] = last_field
         return super(StructBase, cls).__new__(cls, name, bases, attrs)
@@ -109,7 +102,7 @@ class NativeField(ABC):
 
     def __init__(self, *args, **kwargs):
         self.property_name = None
-        self.visible = kwargs.pop('visible', True)
+        self.visible = kwargs.pop('visible', None)
         if self.visible is not None:
             self.is_instance = True
 
@@ -117,7 +110,7 @@ class NativeField(ABC):
     def _getvalue(self, native_struct):
         '''
         Gets the value from the provided NativeStruct. To obtain the real byte offset
-        into this NativeField, call native_struct._calc_offset(self).
+        into this NativeField, call native_struct.calc_offset(self).
 
         Args:
             native_struct (NativeStruct): the NativeStruct that the value is retrieved from
@@ -131,7 +124,7 @@ class NativeField(ABC):
     def _setvalue(self, native_struct, value):
         '''
         Sets the value in the provided NativeStruct. To obtain the real byte offset
-        into this NativeField, call native_struct._calc_offset(self).
+        into this NativeField, call native_struct.calc_offset(self).
 
         Args:
             native_struct (NativeStruct): the NativeStruct that the value is set in
@@ -151,30 +144,32 @@ class NativeField(ABC):
         pass
 
     @property
-    def real_offset(self):
+    def min_offset(self):
         '''
         Gets the real offset of this field in bytes, excluding any invisible fields.
-        For more details, see NativeField.get_real_offset.
+        For more details, see NativeField.get_min_offset.
 
         Returns:
-            int: the real offset, in bytes
+            int: the minimum offset of this field in the parent NativeStruct, in bytes
         '''
-        return self.get_real_offset()
+        return self.get_min_offset()
 
-    def get_real_offset(self, exclude_invisible: bool = True):
+    def get_min_offset(self, exclude_invisible: bool = True):
         '''
-        Gets the real offset of this field in bytes.
+        Gets the minimum offset of this field in bytes.
 
         Translates the offset field and recurses until
         a constant offset is encountered. This method
         allows you to count invisible fields as if they were
-        visible in the struct.
+        visible in the struct. The offset returned may not be
+        the real offset with instance fields present in the structure.
+        To obtain the real offset, call native_struct.calc_offset(field).
 
         Args:
             exclude_invisible (bool): whether to exclude invisible fields, True by default
 
         Returns:
-            int: the offset of this field in the parent NativeStruct, in bytes
+            int: the minimum offset of this field in the parent NativeStruct, in bytes
         '''
         return _translate_offset(self.offset, exclude_invisible)
 
@@ -189,6 +184,7 @@ class NativeField(ABC):
         Returns:
             the value that was retrieved
         '''
+        native_struct._ensure_is_instanced(self)
         return getattr(native_struct, self.property_name)._getvalue(native_struct)
 
     def _set_instance_value(self, native_struct, value):
@@ -200,6 +196,7 @@ class NativeField(ABC):
             native_struct (NativeStruct): the NativeStruct that the value is set in
             value: the value that is being used to set the field
         '''
+        native_struct._ensure_is_instanced(self)
         return getattr(native_struct, self.property_name)._setvalue(native_struct, value)
 
     def _resize_with_data(self, native_struct, value):
@@ -211,7 +208,7 @@ class NativeField(ABC):
 
 def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool = True):
     '''
-    Used by NativeField.get_real_offset to calculate the offset.
+    Used by NativeField.get_min_offset to calculate the offset.
 
     Args:
         offset (Tuple[NativeField, int]): if NativeField, calculates the offset of the field,
@@ -222,9 +219,9 @@ def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool =
         return offset
 
     if exclude_invisible and offset.visible is False:
-        return offset.real_offset
+        return offset.min_offset
 
-    return offset.real_offset + offset.size
+    return offset.min_offset + offset.size
 
 
 class NativeStruct(metaclass=StructBase):
@@ -250,14 +247,14 @@ class NativeStruct(metaclass=StructBase):
 
     Args:
         data (Tuple[bytearray, bytes]): the existing data you want to interpret or modify, None by default
-        master_offset (Tuple[NativeField, int]): the master offset used for the struct, 0 by default
+        master_offset (int): the master offset used for the struct, 0 by default
         **kwargs: field=value pairs which describe initial values for defined fields
 
     Attributes:
         data (bytearray): the underlying bytearray containing the binary data
-        master_offset (Tuple[NativeField, int]): the master offset used for the struct, typically 0
+        master_offset (int): the master offset used for the struct, typically 0
     '''
-    def __init__(self, data: Tuple[bytearray, bytes] = None, master_offset: Tuple[NativeField, int] = 0, **kwargs):
+    def __init__(self, data: Tuple[bytearray, bytes] = None, master_offset: int = 0, **kwargs):
         if data:
             if isinstance(data, bytes):
                 self.data = bytearray(data)
@@ -265,22 +262,14 @@ class NativeStruct(metaclass=StructBase):
                 self.data = data
         else:
             self.data = bytearray(self.min_size)
+
         self.master_offset = master_offset
-
-        if self.__class__.has_instance_fields:
-            for varname, value in vars(self.__class__).items():
-                if isinstance(value, NativeField):
-                    field_copy = deepcopy(value)
-                    if isinstance(field_copy.offset, NativeField):
-                        assert hasattr(
-                            field_copy.offset, 'property_name'
-                        ), f'Offset of field "{varname}" does not have any parent struct class'
-                        field_copy.offset = getattr(self, field_copy.offset.property_name)
-
-                    setattr(self, varname, field_copy)
 
         for key in kwargs:
             setattr(self, key, kwargs[key])
+
+    def setattr_proxy(self, name, value):
+        raise Exception('aaaa')
 
     @property
     def size(self):
@@ -288,7 +277,7 @@ class NativeStruct(metaclass=StructBase):
         Returns the offset in bytes after the last field in the struct.
 
         This size is not the size of the actual underlying bytearray data
-        you may have provided. The size is calculated as last_field.real_offset + last_field.size.
+        you may have provided. The size is calculated as calc_offset(last_field) + last_field.size.
         To retrieve the data size, access len(struct.data).
 
         The property does not include hidden fields when calculating the size.
@@ -308,15 +297,22 @@ class NativeStruct(metaclass=StructBase):
         if not last_field:
             return 0
 
-        return last_field.real_offset + last_field.size
+        return self.calc_offset(last_field) + last_field.size
 
-    def resize(self, field_name: str, size):
+    def resize(self, field_name: str, size, resize_bytes: bool = False):
         '''
         Resizes a field inside the struct to a new size.
 
-        Unlike the field.resize() method, in addition this method also
-        resizes the underlying data bytearray. Consequently, this
-        method should be only used when writing new data.
+        By default, this method does not resize the underlying bytearray
+        data, changing only the reading size.
+        To allocate new space for the struct in the underlying bytearray, specify
+        resize_bytes=True.
+
+        If resize_bytes=True, the method adds or removes the bytes
+        in the bytearray needed to align the field to its the new size.
+        If the field has is growing, the field is right padded with zero bytes.
+        Similarly, if the field is shrinking, the bytes are removed
+        from the end of its data.
 
         Non instance fields such as IntegerField or FloatField cannot be resized:
         calling this method to resize a non instance field will result in an exception.
@@ -332,15 +328,19 @@ class NativeStruct(metaclass=StructBase):
         Args:
             field_name (str): the field name of the field inside the NativeStruct
             size: the new size to resize the field to, type dependant on the field being resized
+            resize_bytes (bool): whether to add or remove bytes to the bytearray based on the field size
+                                 False by default
         '''
         try:
             field = getattr(self, f'{field_name}_field')
             if not field.is_instance:
                 raise Exception('Non instance fields cannot be resized')
 
+            field = self._ensure_is_instanced(field)
             old_size = field.size
             field.resize(size)
-            self._resize_data(field, old_size)
+            if resize_bytes:
+                self._resize_data(field, old_size)
         except AttributeError:
             raise Exception(f'Field with name "{field_name}" does not exist in class {self.__class__.__name__}')
 
@@ -354,6 +354,15 @@ class NativeStruct(metaclass=StructBase):
         '''
         if self.size > len(self.data):
             raise Exception('Overflow detected: fields after resize take more size than the struct data')
+
+    def _ensure_is_instanced(self, field: NativeField):
+        struct_field = getattr(self, field.property_name)
+        if field.is_instance and struct_field == field:
+            copy = deepcopy(struct_field)
+            setattr(self, copy.property_name, copy)
+            return copy
+
+        return field
 
     def _resize_data(self, resizing_field: NativeField, old_size: int):
         '''
@@ -370,7 +379,7 @@ class NativeStruct(metaclass=StructBase):
             resizing_field (NativeField): the field that is being resized
             old_size (int): the old size of the resizing field, in bytes
         '''
-        offset = self._calc_offset(resizing_field)
+        offset = self.calc_offset(resizing_field)
 
         # Make sure to modify in-place
         if old_size > resizing_field.size:
@@ -383,7 +392,7 @@ class NativeStruct(metaclass=StructBase):
             del self.data[offset + old_size:]
             self.data.extend(rest)
 
-    def _calc_offset(self, native_field: NativeField):
+    def calc_offset(self, native_field: NativeField):
         '''
         Calculates the real offset for the provided field.
 
@@ -398,7 +407,25 @@ class NativeStruct(metaclass=StructBase):
         Returns:
             int: the calculated offset in bytes
         '''
-        return _translate_offset(self.master_offset, True) + native_field.real_offset
+        return self.master_offset + self.calc_field_offset(native_field)
+
+    def calc_field_offset(self, field: NativeField) -> int:
+        '''
+        Calculates the real offset for the provided field.
+
+        Same as calc_offset but does not include adding the master offset.
+
+        Args:
+            native_field (NativeField): the native field to calculate the offset for
+
+        Returns:
+            int: the calculated offset in bytes, without the master offset
+        '''
+        if isinstance(field.offset, int):
+            return field.offset
+
+        instance_offset = getattr(self, field.offset.property_name)
+        return self.calc_field_offset(instance_offset) + instance_offset.size
 
     def _print(self, indent_level: int) -> str:
         '''

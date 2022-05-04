@@ -302,6 +302,9 @@ class NativeStruct(metaclass=StructBase):
         Returns:
             int: the offset after the last field in the struct
         '''
+        if not self.__class__.last_field:
+            return 0
+
         last_field = getattr(self, self.__class__.last_field.property_name)
         if not last_field:
             return 0

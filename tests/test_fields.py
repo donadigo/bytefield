@@ -5,16 +5,16 @@ from nativefields import *
 
 def test_pack_value():
     field = IntegerField(0)
-    obj = pack_value(0xDEAD, field)
-    assert bytearray(obj.data) == struct.pack('i', 0xDEAD)
+    data = pack_value(0xDEAD, field)
+    assert bytearray(data) == struct.pack('i', 0xDEAD)
 
     field = DoubleField(4)
-    obj = pack_value(4.5, field)
-    assert bytearray(obj.data) == bytearray(4) + struct.pack('d', 4.5)
+    data = pack_value(4.5, field)
+    assert bytearray(data) == bytearray(4) + struct.pack('d', 4.5)
 
     field = StringField(0, len('string'), encoding='ascii')
-    obj = pack_value('string', field)
-    assert bytearray(obj.data) == struct.pack(f"{len('string')}s", 'string'.encode('ascii'))
+    data = pack_value('string', field)
+    assert bytearray(data) == struct.pack(f"{len('string')}s", 'string'.encode('ascii'))
 
 
 def test_unpack_value():

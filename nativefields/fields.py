@@ -123,6 +123,27 @@ class SimpleField(NativeField):
 
 
 class ByteArrayField(NativeField):
+    '''
+    ByteArrayField allows for slicing the underlying bytearray data,
+    that can be interpreted later.
+
+    The returned value is a bytearray of size provided by the user, beginning
+    at index of the field's offset. The returned data is copied and modifying will
+    not change the source bytearray. To modify it, you need to explicitly set the field
+    to the new value:
+
+        val = native_struct.byte_field
+        val[0] = 200
+        native_struct.byte_field = val
+
+    ByteArrayField supports variable sized bytearray chunks. To make the field
+    dynamically sized, pass None to the length parameter and call
+    native_struct.resize() to resize the field to a new length.
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        length (int): the length of the sliced array in bytes
+    '''
     def __init__(self, offset: Tuple[NativeField, int], length: int, **kwargs):
         self.offset = offset
         if length is None:
@@ -130,8 +151,6 @@ class ByteArrayField(NativeField):
             self.is_instance = True
         else:
             self.size = length
-
-        self.is_instance = False
 
         super().__init__(**kwargs)
 
@@ -163,27 +182,51 @@ class ByteArrayField(NativeField):
 
 
 class Endianness(Enum):
+    '''
+    Describes the endianness of the value.
+    Endianness.NATIVE depends to the host endianness.
+    '''
     NATIVE = 0,
     LITTLE = 1,
     BIG = 2
 
+    def to_format(self) -> str:
+        '''
+        Returns the format character according to struct module format.
+        Empty if the value == Endianness.NATIVE.
+
+        Returns:
+            str: the format character
+        '''
+        if self == Endianness.LITTLE:
+            return '<'
+        elif self == Endianness.BIG:
+            return '>'
+
+        return ''
+
 
 class IntegerField(SimpleField):
+    '''
+    An IntegerField allows for parsing integers of different sizes inside the
+    native struct. IntegerField supports specifying the endianness of the integer
+    and if it is signed or not.
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        signed (bool): whether the integer is signed or unsigned, True by default
+        size (int): the size of the integer in bytes, either 1, 2, 4 or 8. 4 by default
+        endianness (Endianness): the endianness of the integer, Endianness.NATIVE by default
+    '''
     def __init__(
         self,
-        offset:
-        Tuple[NativeField, int],
+        offset: Tuple[NativeField, int],
         signed: bool = True,
         size: int = 4,
         endianness: Endianness = Endianness.NATIVE,
         **kwargs
     ):
-        prefix = '@'
-        if endianness == Endianness.BIG:
-            prefix = '>'
-        elif endianness == Endianness.LITTLE:  # NOQA
-            prefix = '<'
-
+        prefix = endianness.to_format()
         if size == 4:
             super().__init__(offset, f'{prefix}i' if signed else f'{prefix}I', **kwargs)
         elif size == 2:
@@ -197,16 +240,49 @@ class IntegerField(SimpleField):
 
 
 class DoubleField(SimpleField):
-    def __init__(self, offset: Tuple[NativeField, int], **kwargs):
-        super().__init__(offset, 'd', **kwargs)
+    '''
+    DoubleField parses 8 byte floating point numbers.
+    Supports specifying the endianness of the integer.
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        endianness (Endianness): the endianness of the double, Endianness.NATIVE by default
+    '''
+    def __init__(self, offset: Tuple[NativeField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
+        prefix = endianness.to_format()
+        super().__init__(offset, f'{prefix}d', **kwargs)
 
 
 class FloatField(SimpleField):
-    def __init__(self, offset: Tuple[NativeField, int], **kwargs):
-        super().__init__(offset, 'f', **kwargs)
+    '''
+    FloatField parses 4 byte floating point numbers.
+    Supports specifying the endianness of the integer.
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        endianness (Endianness): the endianness of the double, Endianness.NATIVE by default
+    '''
+    def __init__(self, offset: Tuple[NativeField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
+        prefix = endianness.to_format()
+        super().__init__(offset, f'{prefix}f', **kwargs)
 
 
 class BooleanField(IntegerField):
+    '''
+    A BooleanField is an IntegerField, which converts between
+    booleans and integers. The conversion is carried out with
+    using the bool() and int() casts. That is, a non-zero value
+    translates to True and False otherwise.
+
+    By default, BooleanField has a size of 4. You can however
+    specify a different size by supplying a size= keyword argument.
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+
+    Keyword Args:
+        size (int): the size of the BooleanField in bytes
+    '''
     def __init__(self, offset: Tuple[NativeField, int], **kwargs):
         super().__init__(offset, signed=False, **kwargs)
 
@@ -218,6 +294,23 @@ class BooleanField(IntegerField):
 
 
 class StringField(SimpleField):
+    '''
+    A StringField interprets strings of constant or variable size with the
+    specified encoding.
+
+    StringField supports variable sized bytearray chunks. To make the field
+    dynamically sized, pass None to the length parameter and call
+    native_struct.resize() to resize the field to a new length.
+
+    To decode the string, the encoding type is required. By default, this is "utf-8".
+    To view the list of possible encodings,
+    visit https://docs.python.org/3/library/codecs.html#standard-encodings.
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        length (int): the length of the string in bytes
+        encoding (str): the encoding of the string, from Standard Encodings of the codecs module
+    '''
     def __init__(self, offset: Tuple[NativeField, int], length: int, encoding='utf-8', **kwargs):
         self.encoding = encoding
         if length is None:
@@ -242,6 +335,37 @@ class StringField(SimpleField):
 
 
 class ArrayField(NativeField):
+    '''
+    ArrayField is a general purpose field for parsing arrays of elements.
+
+    You can specify what type of elements the array stores with the
+    elem_field_type argument.
+
+    As ArrayField utilizes numpy arrays to handle arrays, the field
+    supports parsing multidimensional arrays. The shape argument
+    takes a single int (one dimensional array) or a tuple of dimension
+    sizes. In case of multi dimensional arrays, the elements are always
+    parsed sequentially, but are reshaped into the target shape.
+
+    To make the array dynamically sized, pass None as its shape and
+    use native_struct.resize() to resize the field to a new size.
+
+    Attributes:
+        shape (tuple): the shape of the array
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+        shape (Tuple[tuple, int]): a tuple or an integer specifying the dimensions of the array
+        elem_field_type (type): the type of the field elements inside the array.
+                                The type has to be a subclass of NativeField or NativeStruct.
+
+    The rest of keyword arguments are passed to the elem_field_type constructor.
+    For example, to create an array field with IntegerField's of size 2, pass the size
+    keyword argument:
+
+        class Struct(NativeStruct):
+            array = ArrayField(0, None, IntegerField, size=2)
+    '''
     def __init__(
         self,
         offset: Tuple[NativeField, int],
@@ -253,8 +377,11 @@ class ArrayField(NativeField):
 
         if issubclass(elem_field_type, NativeField):
             self._elem_field = elem_field_type(0, **kwargs)
-        else:
+        elif issubclass(elem_field_type, NativeStruct):
             self._elem_field = StructField(0, elem_field_type)
+        else:
+            raise Exception('elem_field_type has to be a subclass of NativeField or NativeStruct, '
+                            f'got {elem_field_type.__name__}')
 
         if shape:
             self.shape = (shape,) if isinstance(shape, int) else shape[:]
@@ -272,7 +399,7 @@ class ArrayField(NativeField):
         self.size = self._elem_field.size * int(np.prod(self.shape))
 
     @staticmethod
-    def get_array_index(shape: tuple, index: tuple) -> int:
+    def _get_array_index(shape: tuple, index: tuple) -> int:
         assert shape, 'shape cannot be an empty list'
         assert len(shape) == len(index), 'shape and index need to be the same length'
         return sum([index[i] * int(np.prod(shape[i + 1:])) for i in range(len(index) - 1)]) + index[-1]
@@ -285,7 +412,7 @@ class ArrayField(NativeField):
 
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
-                arr_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
+                arr_offset + ArrayField._get_array_index(self.shape, index) * self._elem_field.size
             )
 
             if is_struct_field:
@@ -309,13 +436,34 @@ class ArrayField(NativeField):
         arr_offset = native_struct.calc_field_offset(self)
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
-                arr_offset + ArrayField.get_array_index(self.shape, index) * self._elem_field.size
+                arr_offset + ArrayField._get_array_index(self.shape, index) * self._elem_field.size
             )
 
             self._elem_field._setvalue(native_struct, arr[index])
 
 
 class VariableField(NativeField):
+    '''
+    A VariableField is a field which initially does not hold any
+    type of field. To set the type that's being parsed,
+    call the resize method of its parent NativeStruct:
+
+        class Struct(NativeStruct):
+            variable_field = VariableField(0)
+
+        native_struct = Struct()
+        native_struct.resize('variable_field', IntegerField(0, size=2), resize_bytes=True)
+        native_struct.variable_field = 5
+
+    Note that trying to access the VariableField without resizing it first
+    will result in an exception.
+
+    Attributes:
+        child (NativeField): the child field that is currently stored
+
+    Args:
+        offset (Tuple[NativeField, int]): the offset of this field
+    '''
     def __init__(self, offset: Tuple[NativeField, int], **kwargs):
         self.offset = offset
         self.size = 0
@@ -344,7 +492,20 @@ class VariableField(NativeField):
         return val
 
 
-def unpack_bytes(data: Tuple[bytearray, NativeStruct], field: NativeField):
+def unpack_bytes(data: Tuple[bytearray, bytes, NativeStruct], field: NativeField):
+    '''
+    Interprets the bytes inside the data using the supplied field.
+
+    If data is a NativeStruct instance, the value is directly
+    retrieved from the bytearray of the NativeStruct.
+
+    Args:
+        data (Tuple[bytearray, bytes, NativeStruct]): the data to interpret
+        field (NativeField): the field used to interpret the data
+
+    Returns:
+        the interpreted value
+    '''
     if isinstance(data, NativeStruct):
         return field._getvalue(data)
 
@@ -352,7 +513,18 @@ def unpack_bytes(data: Tuple[bytearray, NativeStruct], field: NativeField):
     return field._getvalue(native_struct)
 
 
-def pack_value(value, field: NativeField) -> NativeStruct:
+def pack_value(value, field: NativeField) -> bytearray:
+    '''
+    Produces a NativeStruct with the data representing the
+    supplied field and value.
+
+    Args:
+        value: the value to encode
+        field (NativeField): the field used to encode the value
+
+    Returns:
+        bytearray: the resulting bytes of the encoding
+    '''
     native_struct = NativeStruct(bytearray(field.min_offset + field.size))
     field._setvalue(native_struct, value)
-    return native_struct
+    return native_struct.data

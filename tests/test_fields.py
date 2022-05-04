@@ -1,6 +1,6 @@
 import struct
 import numpy as np
-from nativefields import *
+from bytefields import *
 
 
 def test_pack_value():
@@ -24,12 +24,12 @@ def test_unpack_value():
 
 
 def test_struct():
-    class InnerStruct(NativeStruct):
+    class InnerStruct(ByteStruct):
         value1 = StringField(offset=0, length=len('abc'))
         value2 = StringField(offset=value1, length=len('def'))
         value3 = ArrayField(offset=value2, shape=3, elem_field_type=FloatField)
 
-    class TestStruct(NativeStruct):
+    class TestStruct(ByteStruct):
         value1 = IntegerField(offset=0)
         value2 = DoubleField(offset=value1)
         value3 = ArrayField(offset=value2, shape=(3, 3), elem_field_type=IntegerField, size=2, signed=False)

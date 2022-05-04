@@ -3,12 +3,12 @@ from enum import Enum
 import struct
 from typing import Iterable, Tuple
 import numpy as np
-from nativefields.base import NativeStruct, NativeField
+from bytefields.base import ByteStruct, ByteField
 
 
-class StructField(NativeField):
+class StructField(ByteField):
     '''
-    A StructField provides a way to embed other native structs inside a native struct.
+    A StructField provides a way to embed other byte structs inside a byte struct.
 
     The data is stored as if the StructField was replaced with the fields from
     the struct that this field holds: that is, the offset of the StructField equals
@@ -21,13 +21,13 @@ class StructField(NativeField):
 
         master_struct.inner_struct.inner_int_field = 5
 
-    However, this also means that the value of StructField (a NativeStruct instance),
+    However, this also means that the value of StructField (a ByteStruct instance),
     is not valid after e.g. resizing a field inside the master struct:
 
-        class Inner(NativeStruct):
+        class Inner(ByteStruct):
             inner_int_field = IntegerField(offset=0)
 
-        class Master(NativeStruct):
+        class Master(ByteStruct):
             bytes = ByteArrayField(offset=0, length=None)
             inner_struct = StructField(offset=bytes, Inner)
 
@@ -42,18 +42,18 @@ class StructField(NativeField):
                                                         # makes sure they are valid
 
         Attributes:
-            offset (Tuple[NativeField, int]): the offset of this field
-            struct_type (type): the NativeStruct type that this field holds
+            offset (Tuple[ByteField, int]): the offset of this field
+            struct_type (type): the ByteStruct type that this field holds
             size (int): the size of this field in bytes
             is_instance (bool): always True, the field is always only an instance field
             inner: the inner struct that is being stored
 
         Args:
-            offset (Tuple[NativeField, int]): the offset of this field
-            struct_type (type): the NativeStruct type that this field holds
+            offset (Tuple[ByteField, int]): the offset of this field
+            struct_type (type): the ByteStruct type that this field holds
     '''
-    def __init__(self, offset: Tuple[NativeField, int], struct_type: type, **kwargs):
-        assert issubclass(struct_type, NativeStruct), 'struct_type must be an inheritant of type NativeStruct'
+    def __init__(self, offset: Tuple[ByteField, int], struct_type: type, **kwargs):
+        assert issubclass(struct_type, ByteStruct), 'struct_type must be an inheritant of type ByteStruct'
         self.offset = offset
         self.struct_type = struct_type
         self.size = struct_type.min_size
@@ -61,31 +61,31 @@ class StructField(NativeField):
         self.inner = None
         super().__init__(**kwargs)
 
-    def _getvalue(self, native_struct: NativeStruct):
+    def _getvalue(self, byte_struct: ByteStruct):
         # We have to update both the data and master_offset of the inner struct:
         # the inner data can come from user code and master_offset is dependant
         # on the sizing of dynamic fields
         if not self.inner:
-            self.inner = self.struct_type(native_struct.data, native_struct.calc_offset(self))
+            self.inner = self.struct_type(byte_struct.data, byte_struct.calc_offset(self))
         else:
-            self.inner.data = native_struct.data
-            self.inner.master_offset = native_struct.calc_offset(self)
+            self.inner.data = byte_struct.data
+            self.inner.master_offset = byte_struct.calc_offset(self)
 
         return self.inner
 
-    def _setvalue(self, native_struct: NativeStruct, value):
+    def _setvalue(self, byte_struct: ByteStruct, value):
         old_size = self.size
         self.size = value.size
         if self.size != old_size:
-            native_struct._resize_data(self, old_size)
+            byte_struct._resize_data(self, old_size)
 
-        offset = native_struct.calc_offset(self)
-        native_struct.data[offset:offset + self.size] = value.data[:]
+        offset = byte_struct.calc_offset(self)
+        byte_struct.data[offset:offset + self.size] = value.data[:]
         value.data = bytearray()
         self.inner = deepcopy(value)
 
 
-class SimpleField(NativeField):
+class SimpleField(ByteField):
     '''
     A SimpleField is a base field to simple type fields such as IntegerField, FloatField,
     DoubleField, StringField and BooleanField. SimpleField interprets the data
@@ -93,36 +93,36 @@ class SimpleField(NativeField):
     https://docs.python.org/3/library/struct.html to view this format specification.
 
     Attributes:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         format (str): the format this field uses to interpret the data
         size (int): the size of this field in bytes
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         struct_format (str): the format this field should use to interpret the data
     '''
-    def __init__(self, offset: Tuple[NativeField, int], struct_format: str, **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], struct_format: str, **kwargs):
         self.offset = offset
         self.format = struct_format
         self.size = struct.calcsize(struct_format)
         super().__init__(**kwargs)
 
-    def _getvalue(self, native_struct: NativeStruct):
-        offset = native_struct.calc_offset(self)
-        if offset + self.size > len(native_struct.data):
+    def _getvalue(self, byte_struct: ByteStruct):
+        offset = byte_struct.calc_offset(self)
+        if offset + self.size > len(byte_struct.data):
             raise Exception('Failed to get value: field is out of bounds')
 
-        return struct.unpack(self.format, native_struct.data[offset:offset + self.size])[0]
+        return struct.unpack(self.format, byte_struct.data[offset:offset + self.size])[0]
 
-    def _setvalue(self, native_struct: NativeStruct, value):
-        offset = native_struct.calc_offset(self)
-        if offset + self.size > len(native_struct.data):
+    def _setvalue(self, byte_struct: ByteStruct, value):
+        offset = byte_struct.calc_offset(self)
+        if offset + self.size > len(byte_struct.data):
             raise Exception('Failed to set value: field is out of bounds')
 
-        native_struct.data[offset:offset + self.size] = struct.pack(self.format, value)
+        byte_struct.data[offset:offset + self.size] = struct.pack(self.format, value)
 
 
-class ByteArrayField(NativeField):
+class ByteArrayField(ByteField):
     '''
     ByteArrayField allows for slicing the underlying bytearray data,
     that can be interpreted later.
@@ -132,19 +132,19 @@ class ByteArrayField(NativeField):
     not change the source bytearray. To modify it, you need to explicitly set the field
     to the new value:
 
-        val = native_struct.byte_field
+        val = byte_struct.byte_field
         val[0] = 200
-        native_struct.byte_field = val
+        byte_struct.byte_field = val
 
     ByteArrayField supports variable sized bytearray chunks. To make the field
     dynamically sized, pass None to the length parameter and call
-    native_struct.resize() to resize the field to a new length.
+    byte_struct.resize() to resize the field to a new length.
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         length (int): the length of the sliced array in bytes
     '''
-    def __init__(self, offset: Tuple[NativeField, int], length: int, **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], length: int, **kwargs):
         self.offset = offset
         if length is None:
             self.size = 0
@@ -157,28 +157,28 @@ class ByteArrayField(NativeField):
     def resize(self, length: int):
         self.size = length
 
-    def _getvalue(self, native_struct: NativeStruct):
-        offset = native_struct.calc_offset(self)
-        if offset + self.size > len(native_struct.data):
+    def _getvalue(self, byte_struct: ByteStruct):
+        offset = byte_struct.calc_offset(self)
+        if offset + self.size > len(byte_struct.data):
             raise Exception('Failed to get value: field is out of bounds')
 
-        return native_struct.data[offset:offset + self.size]
+        return byte_struct.data[offset:offset + self.size]
 
-    def _setvalue(self, native_struct: NativeStruct, value):
+    def _setvalue(self, byte_struct: ByteStruct, value):
         new_length = len(value)
         if self.is_instance and new_length != self.size:
-            self._resize_with_data(native_struct, new_length)
+            self._resize_with_data(byte_struct, new_length)
         else:
             assert new_length == self.size, f'bytearray size {new_length} not matching, should be {self.size}'
 
-        offset = native_struct.calc_offset(self)
-        if offset + self.size > len(native_struct.data):
+        offset = byte_struct.calc_offset(self)
+        if offset + self.size > len(byte_struct.data):
             raise Exception(
                 f'Failed to set value: field at offset {offset} and size {self.size} '
-                f'is out of bounds for struct with size {len(native_struct.data)}'
+                f'is out of bounds for struct with size {len(byte_struct.data)}'
             )
 
-        native_struct.data[offset:offset + self.size] = value
+        byte_struct.data[offset:offset + self.size] = value
 
 
 class Endianness(Enum):
@@ -209,18 +209,18 @@ class Endianness(Enum):
 class IntegerField(SimpleField):
     '''
     An IntegerField allows for parsing integers of different sizes inside the
-    native struct. IntegerField supports specifying the endianness of the integer
+    byte struct. IntegerField supports specifying the endianness of the integer
     and if it is signed or not.
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         signed (bool): whether the integer is signed or unsigned, True by default
         size (int): the size of the integer in bytes, either 1, 2, 4 or 8. 4 by default
         endianness (Endianness): the endianness of the integer, Endianness.NATIVE by default
     '''
     def __init__(
         self,
-        offset: Tuple[NativeField, int],
+        offset: Tuple[ByteField, int],
         signed: bool = True,
         size: int = 4,
         endianness: Endianness = Endianness.NATIVE,
@@ -245,10 +245,10 @@ class DoubleField(SimpleField):
     Supports specifying the endianness of the integer.
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         endianness (Endianness): the endianness of the double, Endianness.NATIVE by default
     '''
-    def __init__(self, offset: Tuple[NativeField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
         prefix = endianness.to_format()
         super().__init__(offset, f'{prefix}d', **kwargs)
 
@@ -259,10 +259,10 @@ class FloatField(SimpleField):
     Supports specifying the endianness of the integer.
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         endianness (Endianness): the endianness of the double, Endianness.NATIVE by default
     '''
-    def __init__(self, offset: Tuple[NativeField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
         prefix = endianness.to_format()
         super().__init__(offset, f'{prefix}f', **kwargs)
 
@@ -278,19 +278,19 @@ class BooleanField(IntegerField):
     specify a different size by supplying a size= keyword argument.
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
 
     Keyword Args:
         size (int): the size of the BooleanField in bytes
     '''
-    def __init__(self, offset: Tuple[NativeField, int], **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], **kwargs):
         super().__init__(offset, signed=False, **kwargs)
 
-    def _getvalue(self, native_struct: NativeStruct) -> bool:
-        return bool(super()._getvalue(native_struct))
+    def _getvalue(self, byte_struct: ByteStruct) -> bool:
+        return bool(super()._getvalue(byte_struct))
 
-    def _setvalue(self, native_struct: NativeStruct, value: bool):
-        return super()._setvalue(native_struct, int(value))
+    def _setvalue(self, byte_struct: ByteStruct, value: bool):
+        return super()._setvalue(byte_struct, int(value))
 
 
 class StringField(SimpleField):
@@ -300,18 +300,18 @@ class StringField(SimpleField):
 
     StringField supports variable sized bytearray chunks. To make the field
     dynamically sized, pass None to the length parameter and call
-    native_struct.resize() to resize the field to a new length.
+    byte_struct.resize() to resize the field to a new length.
 
     To decode the string, the encoding type is required. By default, this is "utf-8".
     To view the list of possible encodings,
     visit https://docs.python.org/3/library/codecs.html#standard-encodings.
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         length (int): the length of the string in bytes
         encoding (str): the encoding of the string, from Standard Encodings of the codecs module
     '''
-    def __init__(self, offset: Tuple[NativeField, int], length: int, encoding='utf-8', **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], length: int, encoding='utf-8', **kwargs):
         self.encoding = encoding
         if length is None:
             self.is_instance = True
@@ -323,18 +323,18 @@ class StringField(SimpleField):
         self.size = length
         self.format = f'{self.size}s'
 
-    def _getvalue(self, native_struct: NativeStruct) -> str:
-        return super()._getvalue(native_struct).decode(self.encoding)
+    def _getvalue(self, byte_struct: ByteStruct) -> str:
+        return super()._getvalue(byte_struct).decode(self.encoding)
 
-    def _setvalue(self, native_struct: NativeStruct, value: str):
+    def _setvalue(self, byte_struct: ByteStruct, value: str):
         new_length = len(value)
         if self.is_instance and new_length != self.size:
-            self._resize_with_data(native_struct, new_length)
+            self._resize_with_data(byte_struct, new_length)
 
-        return super()._setvalue(native_struct, value.encode(self.encoding))
+        return super()._setvalue(byte_struct, value.encode(self.encoding))
 
 
-class ArrayField(NativeField):
+class ArrayField(ByteField):
     '''
     ArrayField is a general purpose field for parsing arrays of elements.
 
@@ -348,39 +348,39 @@ class ArrayField(NativeField):
     parsed sequentially, but are reshaped into the target shape.
 
     To make the array dynamically sized, pass None as its shape and
-    use native_struct.resize() to resize the field to a new size.
+    use byte_struct.resize() to resize the field to a new size.
 
     Attributes:
         shape (tuple): the shape of the array
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
         shape (Tuple[tuple, int]): a tuple or an integer specifying the dimensions of the array
         elem_field_type (type): the type of the field elements inside the array.
-                                The type has to be a subclass of NativeField or NativeStruct.
+                                The type has to be a subclass of ByteField or ByteStruct.
 
     The rest of keyword arguments are passed to the elem_field_type constructor.
     For example, to create an array field with IntegerField's of size 2, pass the size
     keyword argument:
 
-        class Struct(NativeStruct):
+        class Struct(ByteStruct):
             array = ArrayField(0, None, IntegerField, size=2)
     '''
     def __init__(
         self,
-        offset: Tuple[NativeField, int],
+        offset: Tuple[ByteField, int],
         shape: Tuple[tuple, int],
         elem_field_type: type,
         **kwargs
     ):
         self.offset = offset
 
-        if issubclass(elem_field_type, NativeField):
+        if issubclass(elem_field_type, ByteField):
             self._elem_field = elem_field_type(0, **kwargs)
-        elif issubclass(elem_field_type, NativeStruct):
+        elif issubclass(elem_field_type, ByteStruct):
             self._elem_field = StructField(0, elem_field_type)
         else:
-            raise Exception('elem_field_type has to be a subclass of NativeField or NativeStruct, '
+            raise Exception('elem_field_type has to be a subclass of ByteField or ByteStruct, '
                             f'got {elem_field_type.__name__}')
 
         if shape:
@@ -404,10 +404,10 @@ class ArrayField(NativeField):
         assert len(shape) == len(index), 'shape and index need to be the same length'
         return sum([index[i] * int(np.prod(shape[i + 1:])) for i in range(len(index) - 1)]) + index[-1]
 
-    def _getvalue(self, native_struct: NativeStruct) -> np.array:
+    def _getvalue(self, byte_struct: ByteStruct) -> np.array:
         arr = np.empty(self.shape, dtype=object)
 
-        arr_offset = native_struct.calc_field_offset(self)
+        arr_offset = byte_struct.calc_field_offset(self)
         is_struct_field = isinstance(self._elem_field, StructField)
 
         for index in np.ndindex(self.shape):
@@ -416,115 +416,115 @@ class ArrayField(NativeField):
             )
 
             if is_struct_field:
-                arr[index] = deepcopy(self._elem_field)._getvalue(native_struct)
+                arr[index] = deepcopy(self._elem_field)._getvalue(byte_struct)
             else:
-                arr[index] = self._elem_field._getvalue(native_struct)
+                arr[index] = self._elem_field._getvalue(byte_struct)
 
         return arr
 
-    def _setvalue(self, native_struct: NativeStruct, value: Iterable):
+    def _setvalue(self, byte_struct: ByteStruct, value: Iterable):
         if isinstance(value, np.ndarray):
             assert value.shape == self.shape, f'array shape {value.shape} not matching, should be {self.shape}'
 
         value_shape = np.array(value).shape
         if self.is_instance and value_shape != self.shape:
-            self._resize_with_data(native_struct, value_shape)
+            self._resize_with_data(byte_struct, value_shape)
 
         arr = np.empty(self.shape, dtype=object)
         arr[:] = value
 
-        arr_offset = native_struct.calc_field_offset(self)
+        arr_offset = byte_struct.calc_field_offset(self)
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
                 arr_offset + ArrayField._get_array_index(self.shape, index) * self._elem_field.size
             )
 
-            self._elem_field._setvalue(native_struct, arr[index])
+            self._elem_field._setvalue(byte_struct, arr[index])
 
 
-class VariableField(NativeField):
+class VariableField(ByteField):
     '''
     A VariableField is a field which initially does not hold any
     type of field. To set the type that's being parsed,
-    call the resize method of its parent NativeStruct:
+    call the resize method of its parent ByteStruct:
 
-        class Struct(NativeStruct):
+        class Struct(ByteStruct):
             variable_field = VariableField(0)
 
-        native_struct = Struct()
-        native_struct.resize('variable_field', IntegerField(0, size=2), resize_bytes=True)
-        native_struct.variable_field = 5
+        byte_struct = Struct()
+        byte_struct.resize('variable_field', IntegerField(0, size=2), resize_bytes=True)
+        byte_struct.variable_field = 5
 
     Note that trying to access the VariableField without resizing it first
     will result in an exception.
 
     Attributes:
-        child (NativeField): the child field that is currently stored
+        child (ByteField): the child field that is currently stored
 
     Args:
-        offset (Tuple[NativeField, int]): the offset of this field
+        offset (Tuple[ByteField, int]): the offset of this field
     '''
-    def __init__(self, offset: Tuple[NativeField, int], **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int], **kwargs):
         self.offset = offset
         self.size = 0
         self.child = None
         self.is_instance = True
 
-    def resize(self, child: NativeField):
+    def resize(self, child: ByteField):
         self.size = child.size
         self.child = child
         self.child.offset = self.offset
 
-    def _getvalue(self, native_struct: NativeStruct):
+    def _getvalue(self, byte_struct: ByteStruct):
         if not self.child:
             raise Exception('VariableField does not contain any field, '
                             'call resize() with the field instance you want to store')
 
-        return self.child._getvalue(native_struct)
+        return self.child._getvalue(byte_struct)
 
-    def _setvalue(self, native_struct: NativeStruct, value):
+    def _setvalue(self, byte_struct: ByteStruct, value):
         if not self.child:
             raise Exception('VariableField does not contain any field, '
                             'call resize() with the field instance you want to store')
 
-        val = self.child._setvalue(native_struct, value)
+        val = self.child._setvalue(byte_struct, value)
         self.size = self.child.size
         return val
 
 
-def unpack_bytes(data: Tuple[bytearray, bytes, NativeStruct], field: NativeField):
+def unpack_bytes(data: Tuple[bytearray, bytes, ByteStruct], field: ByteField):
     '''
     Interprets the bytes inside the data using the supplied field.
 
-    If data is a NativeStruct instance, the value is directly
-    retrieved from the bytearray of the NativeStruct.
+    If data is a ByteStruct instance, the value is directly
+    retrieved from the bytearray of the ByteStruct.
 
     Args:
-        data (Tuple[bytearray, bytes, NativeStruct]): the data to interpret
-        field (NativeField): the field used to interpret the data
+        data (Tuple[bytearray, bytes, ByteStruct]): the data to interpret
+        field (ByteField): the field used to interpret the data
 
     Returns:
         the interpreted value
     '''
-    if isinstance(data, NativeStruct):
+    if isinstance(data, ByteStruct):
         return field._getvalue(data)
 
-    native_struct = NativeStruct(data)
-    return field._getvalue(native_struct)
+    byte_struct = ByteStruct(data)
+    return field._getvalue(byte_struct)
 
 
-def pack_value(value, field: NativeField) -> bytearray:
+def pack_value(value, field: ByteField) -> bytearray:
     '''
-    Produces a NativeStruct with the data representing the
+    Produces a ByteStruct with the data representing the
     supplied field and value.
 
     Args:
         value: the value to encode
-        field (NativeField): the field used to encode the value
+        field (ByteField): the field used to encode the value
 
     Returns:
         bytearray: the resulting bytes of the encoding
     '''
-    native_struct = NativeStruct(bytearray(field.min_offset + field.size))
-    field._setvalue(native_struct, value)
-    return native_struct.data
+    byte_struct = ByteStruct(bytearray(field.min_offset + field.size))
+    field._setvalue(byte_struct, value)
+    return byte_struct.data

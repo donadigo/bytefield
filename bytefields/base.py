@@ -7,22 +7,22 @@ import numpy as np
 
 class StructBase(type):
     '''
-    The metaclass used for creating NativeStruct class types.
+    The metaclass used for creating ByteStruct class types.
 
-    Iterates over the fields available in a NativeStruct subclass
+    Iterates over the fields available in a ByteStruct subclass
     and creates a new type with necessary static attributes.
     Each field part of the subclass is used as a base to create
     getters and setters for it. The actual field instances can be
     accessed through the *field_name*_field attribute. These field
-    instances may be shared across NativeStruct instances.
-    If a NativeStruct subclass contains dynamic sized fields, all fields
+    instances may be shared across ByteStruct instances.
+    If a ByteStruct subclass contains dynamic sized fields, all fields
     are copied for each new instance.
 
     StructBase also adds additional attributes to the class type:
-    - min_size (int): the minimum size the NativeStruct subclass requires
+    - min_size (int): the minimum size the ByteStruct subclass requires
       to hold all of its members. Dynamically sized arrays are counted
       as having size of 0.
-    - last_field (NativeField): the last field in the NativeStruct subclass,
+    - last_field (ByteField): the last field in the ByteStruct subclass,
       None if there are no fields in the subclass
     '''
     def __new__(cls, name, bases, attrs):
@@ -31,7 +31,7 @@ class StructBase(type):
         max_field_offset = -1
 
         for key, field in attrs.copy().items():
-            if not isinstance(field, NativeField):
+            if not isinstance(field, ByteField):
                 continue
 
             for forbidden in ['data', 'master_offset']:
@@ -58,17 +58,17 @@ class StructBase(type):
         return super(StructBase, cls).__new__(cls, name, bases, attrs)
 
 
-class NativeField(ABC):
+class ByteField(ABC):
     '''
-    A NativeField is a base abstract class, which is subclassed
-    to create a field type used in NativeStruct's. A NativeField implements
-    _getvalue and _setvalue methods which operate on the NativeStruct
+    A ByteField is a base abstract class, which is subclassed
+    to create a field type used in ByteStruct's. A ByteField implements
+    _getvalue and _setvalue methods which operate on the ByteStruct
     instance. These methods usually use the struct module to pack the data into
     the underlying bytearray.
 
-    The NativeField consists of an offset and size, which define the placement
+    The ByteField consists of an offset and size, which define the placement
     and sizing of the field. The offset maybe a constant integer byte offset,
-    or another instance of NativeField, which means that this field directly follows
+    or another instance of ByteField, which means that this field directly follows
     that instance offset.
 
     Additionally, a field may be invisible. If a field is invisible, it is
@@ -76,16 +76,16 @@ class NativeField(ABC):
     accessed as if the invisible field did not exist.
 
     Attributes:
-        offset (Tuple[NativeField, int]): the offset of this field in bytes.
+        offset (Tuple[ByteField, int]): the offset of this field in bytes.
                                           The offset maybe a constant integer byte offset,
-                                          or another instance of NativeField, which means that
+                                          or another instance of ByteField, which means that
                                           this field directly follows that instance offset.
         size (int): the size of this field. If the sizing is dynamic, the size is 0 and
                     the field is instance based.
         is_instance (bool): if the field is instance based, it is copied per
-                            NativeStruct instance.
+                            ByteStruct instance.
         property_name (str): the property name of this field. This is the field name
-                             in the NativeStruct class.
+                             in the ByteStruct class.
         visible (bool): if the field is visible. By default, this value is None,
                         which means that the value cannot change visibility.
                         Setting the value explicitly to True or False at instantiation
@@ -105,13 +105,13 @@ class NativeField(ABC):
             self.is_instance = True
 
     @abstractmethod
-    def _getvalue(self, native_struct):
+    def _getvalue(self, byte_struct):
         '''
-        Gets the value from the provided NativeStruct. To obtain the real byte offset
-        into this NativeField, call native_struct.calc_offset(self).
+        Gets the value from the provided ByteStruct. To obtain the real byte offset
+        into this ByteField, call byte_struct.calc_offset(self).
 
         Args:
-            native_struct (NativeStruct): the NativeStruct that the value is retrieved from
+            byte_struct (ByteStruct): the ByteStruct that the value is retrieved from
 
         Returns:
             the value that was retrieved
@@ -119,13 +119,13 @@ class NativeField(ABC):
         pass
 
     @abstractmethod
-    def _setvalue(self, native_struct, value):
+    def _setvalue(self, byte_struct, value):
         '''
-        Sets the value in the provided NativeStruct. To obtain the real byte offset
-        into this NativeField, call native_struct.calc_offset(self).
+        Sets the value in the provided ByteStruct. To obtain the real byte offset
+        into this ByteField, call byte_struct.calc_offset(self).
 
         Args:
-            native_struct (NativeStruct): the NativeStruct that the value is set in
+            byte_struct (ByteStruct): the ByteStruct that the value is set in
             value: the value that is being used to set the field
         '''
         pass
@@ -134,7 +134,7 @@ class NativeField(ABC):
         '''
         The resize method is called when the user requests that this field should
         be resized. Note that you should never call this method directly on the field,
-        instead use the resize() API in NativeStruct. This is because the NativeStruct
+        instead use the resize() API in ByteStruct. This is because the ByteStruct
         API ensures that the field is instanced specifically for the struct instance,
         and that you are not modifying the size of fields in all existing struct instances.
 
@@ -147,10 +147,10 @@ class NativeField(ABC):
     def min_offset(self):
         '''
         Gets the real offset of this field in bytes, excluding any invisible fields.
-        For more details, see NativeField.get_min_offset.
+        For more details, see ByteField.get_min_offset.
 
         Returns:
-            int: the minimum offset of this field in the parent NativeStruct, in bytes
+            int: the minimum offset of this field in the parent ByteStruct, in bytes
         '''
         return self.get_min_offset()
 
@@ -163,62 +163,62 @@ class NativeField(ABC):
         allows you to count invisible fields as if they were
         visible in the struct. The offset returned may not be
         the real offset with instance fields present in the structure.
-        To obtain the real offset, call native_struct.calc_offset(field).
+        To obtain the real offset, call byte_struct.calc_offset(field).
 
         Args:
             exclude_invisible (bool): whether to exclude invisible fields, True by default
 
         Returns:
-            int: the minimum offset of this field in the parent NativeStruct, in bytes
+            int: the minimum offset of this field in the parent ByteStruct, in bytes
         '''
         return _translate_offset(self.offset, exclude_invisible)
 
-    def _get_instance_value(self, native_struct):
+    def _get_instance_value(self, byte_struct):
         '''
-        Same as _getvalue, but calls the method on a field inside NativeStruct instance.
+        Same as _getvalue, but calls the method on a field inside ByteStruct instance.
         Only used in class type generation.
 
         Args:
-            native_struct (NativeStruct): the NativeStruct that the value is retrieved from
+            byte_struct (ByteStruct): the ByteStruct that the value is retrieved from
 
         Returns:
             the value that was retrieved
         '''
-        native_struct._ensure_is_instanced(self)
-        return getattr(native_struct, self.property_name)._getvalue(native_struct)
+        byte_struct._ensure_is_instanced(self)
+        return getattr(byte_struct, self.property_name)._getvalue(byte_struct)
 
-    def _set_instance_value(self, native_struct, value):
+    def _set_instance_value(self, byte_struct, value):
         '''
-        Same as _setvalue, but calls the method on a field inside NativeStruct instance.
+        Same as _setvalue, but calls the method on a field inside ByteStruct instance.
         Only used in class type generation.
 
         Args:
-            native_struct (NativeStruct): the NativeStruct that the value is set in
+            byte_struct (ByteStruct): the ByteStruct that the value is set in
             value: the value that is being used to set the field
         '''
-        native_struct._ensure_is_instanced(self)
-        return getattr(native_struct, self.property_name)._setvalue(native_struct, value)
+        byte_struct._ensure_is_instanced(self)
+        return getattr(byte_struct, self.property_name)._setvalue(byte_struct, value)
 
-    def _resize_with_data(self, native_struct, value):
+    def _resize_with_data(self, byte_struct, value):
         '''
         Resizes the field including resizing the underyling
         bytearray.
 
-        native_struct (NativeStruct): the target native struct that the field is in
+        byte_struct (ByteStruct): the target byte struct that the field is in
         value: the value to resize to
         '''
         old_size = self.size
         self.resize(value)
         if old_size != self.size:
-            native_struct._resize_data(self, old_size)
+            byte_struct._resize_data(self, old_size)
 
 
-def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool = True) -> int:
+def _translate_offset(offset: Tuple[ByteField, int], exclude_invisible: bool = True) -> int:
     '''
-    Used by NativeField.get_min_offset to calculate the offset.
+    Used by ByteField.get_min_offset to calculate the offset.
 
     Args:
-        offset (Tuple[NativeField, int]): if NativeField, calculates the offset of the field,
+        offset (Tuple[ByteField, int]): if ByteField, calculates the offset of the field,
                                           if int, returns this argument
         exclude_invisible (bool): whether to exclude invisible fields, True by default
 
@@ -234,27 +234,27 @@ def _translate_offset(offset: Tuple[NativeField, int], exclude_invisible: bool =
     return offset.min_offset + offset.size
 
 
-class NativeStruct(metaclass=StructBase):
+class ByteStruct(metaclass=StructBase):
     '''
-    NativeStruct is the main class used for creating your own
+    ByteStruct is the main class used for creating your own
     struct definitions. The definition consists of a list of fields
     that make up the struct. The fields act as a convenient resource
     of defining the structure and also define how you use instances
-    of the newly created subclass of NativeStruct.
+    of the newly created subclass of ByteStruct.
 
-    NativeStruct's may be constructed out of existing data e.g read from a file, or
-    without any arguments. If no data has been provided, NativeStruct will
+    ByteStruct's may be constructed out of existing data e.g read from a file, or
+    without any arguments. If no data has been provided, ByteStruct will
     automatically resize itself to fit the minimum size required for storing
-    all the fields. NativeStruct's can also be offset by a master offset,
+    all the fields. ByteStruct's can also be offset by a master offset,
     which defines the additional offset of all the fields inside the struct.
     This is mainly used to internally implement nested structs.
 
-    A NativeStruct can contain instanced fields, which contain data specifc to a NativeStruct
-    instance. When an instanced field is accessed or written to, NativeStruct
+    A ByteStruct can contain instanced fields, which contain data specifc to a ByteStruct
+    instance. When an instanced field is accessed or written to, ByteStruct
     will make sure to copy the field, so that information can be saved per
-    NativeStruct.
+    ByteStruct.
 
-    You can also provide initial values for the NativeStruct instance inside the constructor.
+    You can also provide initial values for the ByteStruct instance inside the constructor.
     These will be reflected in the underlying bytearray immediately after construction.
 
     Args:
@@ -293,7 +293,7 @@ class NativeStruct(metaclass=StructBase):
 
         Note that with e.g:
 
-            class Struct(NativeStruct):
+            class Struct(ByteStruct):
                 member = IntegerField(offset=4)
 
         the size returned by this property is 8 and not 4, this is
@@ -335,10 +335,10 @@ class NativeStruct(metaclass=StructBase):
 
         The size parameter can be an arbitrary object that's type is specified
         by the target field. For example, an ArrayField may be resized with a tuple
-        containing the array shape and a VariableField, another NativeField instance.
+        containing the array shape and a VariableField, another ByteField instance.
 
         Args:
-            field_name (str): the field name of the field inside the NativeStruct
+            field_name (str): the field name of the field inside the ByteStruct
             size: the new size to resize the field to, type dependant on the field being resized
             resize_bytes (bool): whether to add or remove bytes to the bytearray based on the field size
                                  False by default
@@ -367,9 +367,9 @@ class NativeStruct(metaclass=StructBase):
         if self.size > len(self.data):
             raise Exception('Overflow detected: fields after resize take more size than the struct data')
 
-    def _ensure_is_instanced(self, field: NativeField) -> NativeField:
+    def _ensure_is_instanced(self, field: ByteField) -> ByteField:
         '''
-        Ensures that a field is instanced within the native struct.
+        Ensures that a field is instanced within the byte struct.
 
         If the field is not an instance field, the provided field
         is returned as is. If it is, deepcopy is called on
@@ -377,10 +377,10 @@ class NativeStruct(metaclass=StructBase):
         is assigned to the struct instance.
 
         Args:
-            field (NativeField): the target field
+            field (ByteField): the target field
 
         Returns:
-            NativeField: either the same field, or a deepcopy of the field if it was instanced
+            ByteField: either the same field, or a deepcopy of the field if it was instanced
         '''
         struct_field = getattr(self, field.property_name)
         if field.is_instance and struct_field == field:
@@ -390,7 +390,7 @@ class NativeStruct(metaclass=StructBase):
 
         return field
 
-    def _resize_data(self, resizing_field: NativeField, old_size: int):
+    def _resize_data(self, resizing_field: ByteField, old_size: int):
         '''
         Resizes the underlying data bytearray in-place given the field
         that is being resized and its old size.
@@ -402,7 +402,7 @@ class NativeStruct(metaclass=StructBase):
         from the end of its data.
 
         Args:
-            resizing_field (NativeField): the field that is being resized
+            resizing_field (ByteField): the field that is being resized
             old_size (int): the old size of the resizing field, in bytes
         '''
         offset = self.calc_offset(resizing_field)
@@ -418,31 +418,31 @@ class NativeStruct(metaclass=StructBase):
             del self.data[offset + old_size:]
             self.data.extend(rest)
 
-    def calc_offset(self, native_field: NativeField) -> int:
+    def calc_offset(self, byte_field: ByteField) -> int:
         '''
         Calculates the real offset for the provided field.
 
         This method accounts for the master offset that may be
-        present in the NativeStruct that is containing this field,
+        present in the ByteStruct that is containing this field,
         returning how many bytes to skip in the bytearray
         to arrive at the beginning of the field.
 
         Args:
-            native_field (NativeField): the native field to calculate the offset for
+            byte_field (ByteField): the byte field to calculate the offset for
 
         Returns:
             int: the calculated offset in bytes
         '''
-        return self.master_offset + self.calc_field_offset(native_field)
+        return self.master_offset + self.calc_field_offset(byte_field)
 
-    def calc_field_offset(self, field: NativeField) -> int:
+    def calc_field_offset(self, field: ByteField) -> int:
         '''
         Calculates the real offset for the provided field.
 
         Same as calc_offset but does not include adding the master offset.
 
         Args:
-            native_field (NativeField): the native field to calculate the offset for
+            byte_field (ByteField): the byte field to calculate the offset for
 
         Returns:
             int: the calculated offset in bytes, without the master offset
@@ -480,7 +480,7 @@ class NativeStruct(metaclass=StructBase):
                 r += f'{tab}{varname}: (hidden)\n'
             else:
                 field_val = getattr(self, varname)
-                if isinstance(field_val, NativeStruct):
+                if isinstance(field_val, ByteStruct):
                     r += f'{tab}{varname} ({field_val.__class__.__name__}):\n{field_val._print(indent_level + 1)}'
                 elif isinstance(field_val, bytearray) or isinstance(field_val, bytes):
                     if field_val:

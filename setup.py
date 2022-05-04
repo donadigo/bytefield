@@ -1,16 +1,16 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="nativefields",
+    name="bytefields",
     packages=find_packages(exclude=["tests*"]),
     version="1.0.0",
     license="GPL3",
-    description="Allows for easy interpreting of bytearrays as native class fields",
+    description="Parse binary data using declarative field layout and native Python properties",
     author="Adam Bieńkowski",
     author_email="donadigos159@gmail.com",
-    url="https://github.com/donadigo/nativefields",
+    url="https://github.com/donadigo/bytefields",
     download_url="",
-    keywords=["struct", "nativefields", "bytearray"],
+    keywords=["struct", "bytefields", "bytearray"],
     install_requires=[
         "numpy",
     ],

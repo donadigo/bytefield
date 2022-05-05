@@ -6,15 +6,15 @@ from bytefields import *
 def test_pack_value():
     field = IntegerField(0)
     data = pack_value(0xDEAD, field)
-    assert bytearray(data) == struct.pack('i', 0xDEAD)
+    assert data == struct.pack('i', 0xDEAD)
 
     field = DoubleField(4)
     data = pack_value(4.5, field)
-    assert bytearray(data) == bytearray(4) + struct.pack('d', 4.5)
+    assert data == bytearray(4) + struct.pack('d', 4.5)
 
     field = StringField(0, len('string'), encoding='ascii')
     data = pack_value('string', field)
-    assert bytearray(data) == struct.pack(f"{len('string')}s", 'string'.encode('ascii'))
+    assert data == struct.pack(f"{len('string')}s", 'string'.encode('ascii'))
 
 
 def test_unpack_value():
@@ -52,3 +52,36 @@ def test_struct():
     assert inst.inner.value1 == 'abc'
     assert inst.inner.value2 == 'def'
     assert np.array_equal(inst.inner.value3, [3, 2, 1])
+
+
+def test_instances():
+    class InnerStruct(ByteStruct):
+        inner_arr = ArrayField(0, None, StringField, length=3)
+
+    class TestStruct(ByteStruct):
+        static = IntegerField(0)
+        arr = ArrayField(static, None, IntegerField)
+        inner = StructField(arr, InnerStruct)
+
+    inst1 = TestStruct()
+    inst2 = TestStruct()
+    inst3 = TestStruct()
+
+    inst1.arr = [1, 2, 3]
+    inst2.arr = [4, 5, 6, 7]
+
+    assert inst1.arr_field != TestStruct.arr_field
+    assert inst2.arr_field != TestStruct.arr_field
+
+    assert np.array_equal(inst1.arr, [1, 2, 3])
+    assert np.array_equal(inst2.arr, [4, 5, 6, 7])
+
+    assert inst3.arr_field == TestStruct.arr_field
+    assert inst3.arr.shape == (0,)
+    assert inst3.arr_field != TestStruct.arr_field
+
+    inst1.inner.inner_arr = ['000', '111', '222']
+    inst2.inner.inner_arr = ['333', '444', '555']
+
+    assert np.array_equal(inst1.inner.inner_arr, ['000', '111', '222'])
+    assert np.array_equal(inst2.inner.inner_arr, ['333', '444', '555'])

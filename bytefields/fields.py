@@ -306,6 +306,12 @@ class StringField(SimpleField):
     To view the list of possible encodings,
     visit https://docs.python.org/3/library/codecs.html#standard-encodings.
 
+    If a constant length was passed, the string returned from the field
+    will always have this exact length. Setting the field to a string
+    different than the constant length, the string will either be
+    cut off with a longer string or the field will be set partially,
+    with a shorter string.
+
     Args:
         offset (Tuple[ByteField, int]): the offset of this field
         length (int): the length of the string in bytes
@@ -382,6 +388,9 @@ class ArrayField(ByteField):
         else:
             raise Exception('elem_field_type has to be a subclass of ByteField or ByteStruct, '
                             f'got {elem_field_type.__name__}')
+
+        assert not self._elem_field.is_instance, \
+            'instanced fields (with dynamic size) are currently not supported by ArrayField'
 
         if shape:
             self.shape = (shape,) if isinstance(shape, int) else shape[:]

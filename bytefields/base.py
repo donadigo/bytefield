@@ -1,7 +1,7 @@
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from typing import Tuple
+from typing import Iterable, Tuple
 import numpy as np
 
 
@@ -15,13 +15,14 @@ class StructBase(type):
     getters and setters for it. The actual field instances can be
     accessed through the *field_name*_field attribute. These field
     instances may be shared across ByteStruct instances.
-    If a ByteStruct subclass contains dynamic sized fields, all fields
-    are copied for each new instance.
+    Dynamically sized fields such as ArrayField or StringField
+    are copied for each new instance to store their state per
+    ByteStruct instance.
 
     StructBase also adds additional attributes to the class type:
     - min_size (int): the minimum size the ByteStruct subclass requires
-      to hold all of its members. Dynamically sized arrays are counted
-      as having size of 0.
+      to hold all of its members. Dynamically sized arrays and fields
+      are counted as having size of 0.
     - last_field (ByteField): the last field in the ByteStruct subclass,
       None if there are no fields in the subclass
     '''
@@ -34,10 +35,9 @@ class StructBase(type):
             if not isinstance(field, ByteField):
                 continue
 
-            for forbidden in ['data', 'master_offset']:
-                if key == forbidden:
-                    raise Exception(f'A field cannot have a name of "{forbidden}". '
-                                    'To resolve, rename the field to something else')
+            if key == 'data' or key == 'master_offset':
+                raise Exception(f'A field cannot have a name of "{key}". '
+                                'To resolve, rename the field to something else')
 
             field.property_name = f'{key}_field'
             if field.is_instance:
@@ -201,7 +201,7 @@ class ByteField(ABC):
 
     def _resize_with_data(self, byte_struct, value):
         '''
-        Resizes the field including resizing the underyling
+        Resizes the field including resizing the underlying
         bytearray.
 
         byte_struct (ByteStruct): the target byte struct that the field is in
@@ -258,7 +258,7 @@ class ByteStruct(metaclass=StructBase):
     These will be reflected in the underlying bytearray immediately after construction.
 
     Args:
-        data (Tuple[bytearray, bytes]): the existing data you want to interpret or modify, None by default
+        data (Iterable): the existing data you want to interpret or modify, None by default
         master_offset (int): the master offset used for the struct, 0 by default
         **kwargs: field=value pairs which describe initial values for defined fields
 
@@ -266,12 +266,12 @@ class ByteStruct(metaclass=StructBase):
         data (bytearray): the underlying bytearray containing the binary data
         master_offset (int): the master offset used for the struct, typically 0
     '''
-    def __init__(self, data: Tuple[bytearray, bytes] = None, master_offset: int = 0, **kwargs):
+    def __init__(self, data: Iterable = None, master_offset: int = 0, **kwargs):
         if data:
-            if isinstance(data, bytes):
-                self.data = bytearray(data)
-            else:
+            if isinstance(data, bytearray):
                 self.data = data
+            else:
+                self.data = bytearray(data)
         else:
             self.data = bytearray(self.min_size)
 
@@ -382,13 +382,16 @@ class ByteStruct(metaclass=StructBase):
         Returns:
             ByteField: either the same field, or a deepcopy of the field if it was instanced
         '''
-        struct_field = getattr(self, field.property_name)
-        if field.is_instance and struct_field == field:
-            copy = deepcopy(struct_field)
-            setattr(self, copy.property_name, copy)
-            return copy
+        if not field.is_instance:
+            return field
 
-        return field
+        struct_field = getattr(self, field.property_name)
+        if struct_field != field:
+            return struct_field
+
+        copy = deepcopy(struct_field)
+        setattr(self, copy.property_name, copy)
+        return copy
 
     def _resize_data(self, resizing_field: ByteField, old_size: int):
         '''
@@ -479,10 +482,15 @@ class ByteStruct(metaclass=StructBase):
             if field.visible == False:  # NOQA
                 r += f'{tab}{varname}: (hidden)\n'
             else:
-                field_val = getattr(self, varname)
+                try:
+                    field_val = getattr(self, varname)
+                except Exception as e:
+                    r += f'{tab}{varname}: [ reading error ({e.__class__.__name__}) ]\n'
+                    continue
+
                 if isinstance(field_val, ByteStruct):
                     r += f'{tab}{varname} ({field_val.__class__.__name__}):\n{field_val._print(indent_level + 1)}'
-                elif isinstance(field_val, bytearray) or isinstance(field_val, bytes):
+                elif isinstance(field_val, (bytearray, bytes)):
                     if field_val:
                         bytes_repr = f"[ {bytes(field_val[:16]).hex(' ').upper()}"
                         if len(field_val) > 16:
@@ -491,7 +499,7 @@ class ByteStruct(metaclass=StructBase):
                     else:
                         bytes_repr = '[ empty ]\n'
                     r += f'{tab}{varname} ({field_val.__class__.__name__}): {bytes_repr}'
-                elif isinstance(field_val, np.ndarray) or isinstance(field_val, list):
+                elif isinstance(field_val, (np.ndarray, list)):
                     arr_repr = ''
 
                     if len(field_val) > 0:

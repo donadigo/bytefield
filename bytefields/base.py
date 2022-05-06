@@ -138,6 +138,13 @@ class ByteField(ABC):
         API ensures that the field is instanced specifically for the struct instance,
         and that you are not modifying the size of fields in all existing struct instances.
 
+            class Struct(ByteStruct):
+                a = ArrayField(0, None, IntegerField)
+
+            s = Struct([10, 0, 0, 0, 20, 0, 0, 0])
+            s.resize(S.a_field, 2)
+            print(s.a)  # [10, 20]
+
         Resizing involves updating the *size* attribute. Note that resizing is only available for
         instance based fields. That is, is_instance has to be set to True.
         '''
@@ -267,7 +274,7 @@ class ByteStruct(metaclass=StructBase):
         master_offset (int): the master offset used for the struct, typically 0
     '''
     def __init__(self, data: Iterable = None, master_offset: int = 0, **kwargs):
-        if data:
+        if data is not None:
             if isinstance(data, bytearray):
                 self.data = data
             else:
@@ -286,7 +293,7 @@ class ByteStruct(metaclass=StructBase):
         Returns the offset in bytes after the last field in the struct.
 
         This size is not the size of the actual underlying bytearray data
-        you may have provided. The size is calculated as calc_offset(last_field) + last_field.size.
+        you may have provided. The size is calculated as calc_field_offset(last_field) + last_field.size.
         To retrieve the data size, access len(struct.data).
 
         The property does not include hidden fields when calculating the size.
@@ -309,9 +316,9 @@ class ByteStruct(metaclass=StructBase):
         if not last_field:
             return 0
 
-        return self.calc_offset(last_field) + last_field.size
+        return self.calc_field_offset(last_field) + last_field.size
 
-    def resize(self, field_name: str, size, resize_bytes: bool = False):
+    def resize(self, field: ByteField, size, resize_bytes: bool = False):
         '''
         Resizes a field inside the struct to a new size.
 
@@ -322,9 +329,17 @@ class ByteStruct(metaclass=StructBase):
 
         If resize_bytes=True, the method adds or removes the bytes
         in the bytearray needed to align the field to its the new size.
-        If the field has is growing, the field is right padded with zero bytes.
+        If the field is growing, the field is right padded with zero bytes.
         Similarly, if the field is shrinking, the bytes are removed
         from the end of its data.
+
+            class Struct(ByteStruct):
+                arr = ArrayField(0, None, IntegerField)
+
+            s = Struct()
+            # Resize the array field to contain 4 elements, adding the
+            # required amount of bytes to the bytearray
+            s.resize(S.arr_field, 4, resize_bytes=True)
 
         Non instance fields such as IntegerField or FloatField cannot be resized:
         calling this method to resize a non instance field will result in an exception.
@@ -338,23 +353,17 @@ class ByteStruct(metaclass=StructBase):
         containing the array shape and a VariableField, another ByteField instance.
 
         Args:
-            field_name (str): the field name of the field inside the ByteStruct
+            field (ByteField): the field that is being resized
             size: the new size to resize the field to, type dependant on the field being resized
-            resize_bytes (bool): whether to add or remove bytes to the bytearray based on the field size
-                                 False by default
         '''
-        try:
-            field = getattr(self, f'{field_name}_field')
-            if not field.is_instance:
-                raise Exception('Non instance fields cannot be resized')
+        if not field.is_instance:
+            raise Exception('Non instance fields cannot be resized')
 
-            field = self._ensure_is_instanced(field)
-            old_size = field.size
-            field.resize(size)
-            if resize_bytes:
-                self._resize_data(field, old_size)
-        except AttributeError:
-            raise Exception(f'Field with name "{field_name}" does not exist in class {self.__class__.__name__}')
+        field = self._ensure_is_instanced(field)
+        old_size = field.size
+        field.resize(size)
+        if resize_bytes:
+            self._resize_data(field, old_size)
 
     def check_overflow(self):
         '''
@@ -365,7 +374,8 @@ class ByteStruct(metaclass=StructBase):
         The method throws an exception if self.size > len(self.data).
         '''
         if self.size > len(self.data):
-            raise Exception('Overflow detected: fields after resize take more size than the struct data')
+            raise Exception('Overflow detected: fields after resize take more size than the struct data. '
+                            'Make sure to use resize_bytes=True in resize() to resize the underlying bytes')
 
     def _ensure_is_instanced(self, field: ByteField) -> ByteField:
         '''
@@ -410,13 +420,15 @@ class ByteStruct(metaclass=StructBase):
         '''
         offset = self.calc_offset(resizing_field)
 
+        new_size = resizing_field.size
+
         # Make sure to modify in-place
-        if old_size > resizing_field.size:
-            rest = self.data[offset:offset + resizing_field.size] + self.data[offset + old_size:]
+        if old_size > new_size:
+            rest = self.data[offset:offset + new_size] + self.data[offset + old_size:]
             del self.data[offset:]
             self.data.extend(rest)
-        elif old_size < resizing_field.size:
-            added_bytes = resizing_field.size - old_size
+        elif old_size < new_size:
+            added_bytes = new_size - old_size
             rest = bytearray([0] * added_bytes) + self.data[offset + old_size:]
             del self.data[offset + old_size:]
             self.data.extend(rest)

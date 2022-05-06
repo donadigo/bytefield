@@ -56,10 +56,16 @@ class StructField(ByteField):
         assert issubclass(struct_type, ByteStruct), 'struct_type must be an inheritant of type ByteStruct'
         self.offset = offset
         self.struct_type = struct_type
-        self.size = struct_type.min_size
         self.is_instance = True
         self.inner = None
         super().__init__(**kwargs)
+
+    @property
+    def size(self):
+        if self.inner:
+            return self.inner.size
+        else:
+            return self.struct_type.min_size
 
     def _getvalue(self, byte_struct: ByteStruct):
         # We have to update both the data and master_offset of the inner struct:
@@ -75,14 +81,13 @@ class StructField(ByteField):
 
     def _setvalue(self, byte_struct: ByteStruct, value):
         old_size = self.size
-        self.size = value.size
-        if self.size != old_size:
+        self.inner = deepcopy(value)
+        new_size = self.size
+        if new_size != old_size:
             byte_struct._resize_data(self, old_size)
 
         offset = byte_struct.calc_offset(self)
-        byte_struct.data[offset:offset + self.size] = value.data[:]
-        value.data = bytearray()
-        self.inner = deepcopy(value)
+        byte_struct.data[offset:offset + new_size] = value.data[:]
 
 
 class SimpleField(ByteField):
@@ -389,7 +394,7 @@ class ArrayField(ByteField):
             raise Exception('elem_field_type has to be a subclass of ByteField or ByteStruct, '
                             f'got {elem_field_type.__name__}')
 
-        assert not self._elem_field.is_instance, \
+        assert not self._elem_field.is_instance or isinstance(self._elem_field, StructField), \
             'instanced fields (with dynamic size) are currently not supported by ArrayField'
 
         if shape:
@@ -458,14 +463,15 @@ class VariableField(ByteField):
     call the resize method of its parent ByteStruct:
 
         class Struct(ByteStruct):
-            variable_field = VariableField(0)
+            variable = VariableField(0)
 
         byte_struct = Struct()
-        byte_struct.resize('variable_field', IntegerField(0, size=2), resize_bytes=True)
-        byte_struct.variable_field = 5
+        byte_struct.resize(Struct.variable_field, IntegerField(0, size=2), resize_bytes=True)
+        byte_struct.variable = 5
 
-    Note that trying to access the VariableField without resizing it first
-    will result in an exception.
+    Note that trying to set the VariableField without resizing it first
+    will result in an exception. If the field was not resized, accessing
+    the field will return None.
 
     Attributes:
         child (ByteField): the child field that is currently stored
@@ -475,19 +481,20 @@ class VariableField(ByteField):
     '''
     def __init__(self, offset: Tuple[ByteField, int], **kwargs):
         self.offset = offset
-        self.size = 0
         self.child = None
         self.is_instance = True
 
+    @property
+    def size(self):
+        return self.child.size if self.child else 0
+
     def resize(self, child: ByteField):
-        self.size = child.size
         self.child = child
         self.child.offset = self.offset
 
     def _getvalue(self, byte_struct: ByteStruct):
         if not self.child:
-            raise Exception('VariableField does not contain any field, '
-                            'call resize() with the field instance you want to store')
+            return None
 
         return self.child._getvalue(byte_struct)
 
@@ -497,7 +504,6 @@ class VariableField(ByteField):
                             'call resize() with the field instance you want to store')
 
         val = self.child._setvalue(byte_struct, value)
-        self.size = self.child.size
         return val
 
 

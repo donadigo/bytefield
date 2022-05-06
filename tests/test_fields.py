@@ -58,10 +58,14 @@ def test_instances():
     class InnerStruct(ByteStruct):
         inner_arr = ArrayField(0, None, StringField, length=3)
 
+    class ElementStruct(ByteStruct):
+        elem = IntegerField(0)
+
     class TestStruct(ByteStruct):
         static = IntegerField(0)
         arr = ArrayField(static, None, IntegerField)
         inner = StructField(arr, InnerStruct)
+        elements = ArrayField(inner, None, ElementStruct)
 
     inst1 = TestStruct()
     inst2 = TestStruct()
@@ -83,5 +87,25 @@ def test_instances():
     inst1.inner.inner_arr = ['000', '111', '222']
     inst2.inner.inner_arr = ['333', '444', '555']
 
+    inst1.elements = [ElementStruct(elem=5), ElementStruct(elem=1)]
+    inst2.resize(TestStruct.elements_field, 4, resize_bytes=True)
+
     assert np.array_equal(inst1.inner.inner_arr, ['000', '111', '222'])
+    assert inst1.elements[0].elem, 5
+    assert inst1.elements[1].elem, 1
     assert np.array_equal(inst2.inner.inner_arr, ['333', '444', '555'])
+    assert inst2.elements[3].elem == 0
+
+
+def test_variable():
+    class Struct(ByteStruct):
+        variable = VariableField(0)
+
+    class Inner(ByteStruct):
+        arr = ArrayField(0, None, StringField, length=2)
+
+    s = Struct()
+    s.resize(Struct.variable_field, StructField(0, Inner), resize_bytes=True)
+    s.variable.arr = ['aa', 'bb', 'cc', 'dd']
+    assert len(s.data) == 8
+    assert np.array_equal(s.variable.arr, ['aa', 'bb', 'cc', 'dd'])

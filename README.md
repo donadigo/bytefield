@@ -59,8 +59,7 @@ with open('image.jpg', 'rb') as f:
 
     # Resize the thumbnail data
     header.marker.resize(
-        'thumb_data', header.marker.x_thumbnail * header.marker.y_thumbnail,
-        resize_bytes=False
+        'thumb_data', header.marker.x_thumbnail * header.marker.y_thumbnail
     )
 
     # Display the thumbnail

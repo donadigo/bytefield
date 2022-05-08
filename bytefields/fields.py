@@ -1,3 +1,4 @@
+from bytefields.array_proxy import ArrayFieldProxy, ByteArrayFieldProxy, _get_array_index
 from copy import deepcopy
 from enum import Enum
 import struct
@@ -66,6 +67,9 @@ class StructField(ByteField):
             return self.inner.size
         else:
             return self.struct_type.min_size
+
+    def reset(self):
+        self.inner = None
 
     def _getvalue(self, byte_struct: ByteStruct):
         # We have to update both the data and master_offset of the inner struct:
@@ -163,11 +167,7 @@ class ByteArrayField(ByteField):
         self.size = length
 
     def _getvalue(self, byte_struct: ByteStruct):
-        offset = byte_struct.calc_offset(self)
-        if offset + self.size > len(byte_struct.data):
-            raise Exception('Failed to get value: field is out of bounds')
-
-        return byte_struct.data[offset:offset + self.size]
+        return ByteArrayFieldProxy(byte_struct, self)
 
     def _setvalue(self, byte_struct: ByteStruct, value):
         new_length = len(value)
@@ -394,6 +394,7 @@ class ArrayField(ByteField):
             raise Exception('elem_field_type has to be a subclass of ByteField or ByteStruct, '
                             f'got {elem_field_type.__name__}')
 
+        # TODO: support instanced fields
         assert not self._elem_field.is_instance or isinstance(self._elem_field, StructField), \
             'instanced fields (with dynamic size) are currently not supported by ArrayField'
 
@@ -412,29 +413,8 @@ class ArrayField(ByteField):
     def _update_size(self):
         self.size = self._elem_field.size * int(np.prod(self.shape))
 
-    @staticmethod
-    def _get_array_index(shape: tuple, index: tuple) -> int:
-        assert shape, 'shape cannot be an empty list'
-        assert len(shape) == len(index), 'shape and index need to be the same length'
-        return sum([index[i] * int(np.prod(shape[i + 1:])) for i in range(len(index) - 1)]) + index[-1]
-
     def _getvalue(self, byte_struct: ByteStruct) -> np.array:
-        arr = np.empty(self.shape, dtype=object)
-
-        arr_offset = byte_struct.calc_field_offset(self)
-        is_struct_field = isinstance(self._elem_field, StructField)
-
-        for index in np.ndindex(self.shape):
-            self._elem_field.offset = (
-                arr_offset + ArrayField._get_array_index(self.shape, index) * self._elem_field.size
-            )
-
-            if is_struct_field:
-                arr[index] = deepcopy(self._elem_field)._getvalue(byte_struct)
-            else:
-                arr[index] = self._elem_field._getvalue(byte_struct)
-
-        return arr
+        return ArrayFieldProxy(byte_struct, self)
 
     def _setvalue(self, byte_struct: ByteStruct, value: Iterable):
         if isinstance(value, np.ndarray):
@@ -450,7 +430,7 @@ class ArrayField(ByteField):
         arr_offset = byte_struct.calc_field_offset(self)
         for index in np.ndindex(self.shape):
             self._elem_field.offset = (
-                arr_offset + ArrayField._get_array_index(self.shape, index) * self._elem_field.size
+                arr_offset + _get_array_index(self.shape, index) * self._elem_field.size
             )
 
             self._elem_field._setvalue(byte_struct, arr[index])

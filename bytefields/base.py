@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Iterable, Tuple
 import numpy as np
+import bytefields.array_proxy
+from bytefields.format import _format_bytearray, _format_numpy
 
 
 class StructBase(type):
@@ -30,6 +32,7 @@ class StructBase(type):
         struct_size = 0
         last_field = None
         max_field_offset = -1
+        has_instance_fields = False
 
         for key, field in attrs.copy().items():
             if not isinstance(field, ByteField):
@@ -42,6 +45,7 @@ class StructBase(type):
             field.property_name = f'{key}_field'
             if field.is_instance:
                 attrs[key] = property(field._get_instance_value, field._set_instance_value)
+                has_instance_fields = True
             else:
                 attrs[key] = property(field._getvalue, field._setvalue)
 
@@ -55,6 +59,7 @@ class StructBase(type):
 
         attrs['min_size'] = struct_size
         attrs['last_field'] = last_field
+        attrs['has_instance_fields'] = has_instance_fields
         return super(StructBase, cls).__new__(cls, name, bases, attrs)
 
 
@@ -497,38 +502,33 @@ class ByteStruct(metaclass=StructBase):
                 try:
                     field_val = getattr(self, varname)
                 except Exception as e:
-                    r += f'{tab}{varname}: [ reading error ({e.__class__.__name__}) ]\n'
+                    r += f'{tab}{varname}: [ reading error ({e.__class__.__name__}) ]'
                     continue
 
                 if isinstance(field_val, ByteStruct):
                     r += f'{tab}{varname} ({field_val.__class__.__name__}):\n{field_val._print(indent_level + 1)}'
-                elif isinstance(field_val, (bytearray, bytes)):
-                    if field_val:
-                        bytes_repr = f"[ {bytes(field_val[:16]).hex(' ').upper()}"
-                        if len(field_val) > 16:
-                            bytes_repr += f'  ({len(field_val) - 16} more bytes...)'
-                        bytes_repr += ' ]\n'
-                    else:
-                        bytes_repr = '[ empty ]\n'
+                elif isinstance(field_val, (bytearray, bytes, bytefields.array_proxy.ByteArrayFieldProxy)):
+                    if isinstance(field_val, bytefields.array_proxy.ByteArrayFieldProxy):
+                        field_val = field_val.to_bytearray()
+
+                    bytes_repr = _format_bytearray(field_val)
                     r += f'{tab}{varname} ({field_val.__class__.__name__}): {bytes_repr}'
-                elif isinstance(field_val, (np.ndarray, list)):
+                elif isinstance(field_val, (np.ndarray, list, bytefields.array_proxy.ArrayFieldProxy)):
                     arr_repr = ''
 
+                    if isinstance(field_val, bytefields.array_proxy.ArrayFieldProxy):
+                        field_val = field_val.to_numpy()
+
+                    arr_repr = _format_numpy(field_val)
                     if len(field_val) > 0:
-                        arr_repr += f'{field_val[:16]}'
-                        if len(field_val) > 16:
-                            arr_repr += f'   ({len(field_val) - 16} more items...)'
-
-                        if '\n' in arr_repr:
-                            arr_repr = '\n' + arr_repr
-
                         arr_repr = arr_repr.replace('\n', f'\n{tab}\t')
-                        arr_repr += '\n'
-                    else:
-                        arr_repr = '[ empty ]\n'
+
                     r += f'{tab}{varname} ({field_val.__class__.__name__}): {arr_repr}'
                 else:
-                    r += f'{tab}{varname} ({field_val.__class__.__name__}): {field_val}\n'
+                    r += f'{tab}{varname} ({field_val.__class__.__name__}): {field_val}'
+
+                if field.property_name != self.__class__.last_field.property_name:
+                    r += '\n'
 
         return r
 

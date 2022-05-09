@@ -32,20 +32,18 @@ class StructBase(type):
         struct_size = 0
         last_field = None
         max_field_offset = -1
-        has_instance_fields = False
 
         for key, field in attrs.copy().items():
             if not isinstance(field, ByteField):
                 continue
 
             if key == 'data' or key == 'master_offset':
-                raise Exception(f'A field cannot have a name of "{key}". '
-                                'To resolve, rename the field to something else')
+                raise KeyError(f'a field cannot have a name of "{key}". '
+                               'To resolve, rename the field to something else')
 
             field.property_name = f'{key}_field'
             if field.is_instance:
                 attrs[key] = property(field._get_instance_value, field._set_instance_value)
-                has_instance_fields = True
             else:
                 attrs[key] = property(field._getvalue, field._setvalue)
 
@@ -59,7 +57,6 @@ class StructBase(type):
 
         attrs['min_size'] = struct_size
         attrs['last_field'] = last_field
-        attrs['has_instance_fields'] = has_instance_fields
         return super(StructBase, cls).__new__(cls, name, bases, attrs)
 
 
@@ -72,7 +69,7 @@ class ByteField(ABC):
     the underlying bytearray.
 
     The ByteField consists of an offset and size, which define the placement
-    and sizing of the field. The offset maybe a constant integer byte offset,
+    and sizing of the field. The offset may be a constant integer byte offset,
     or another instance of ByteField, which means that this field directly follows
     that instance offset.
 
@@ -82,7 +79,7 @@ class ByteField(ABC):
 
     Attributes:
         offset (Tuple[ByteField, int]): the offset of this field in bytes.
-                                          The offset maybe a constant integer byte offset,
+                                          The offset may be a constant integer byte offset,
                                           or another instance of ByteField, which means that
                                           this field directly follows that instance offset.
         size (int): the size of this field. If the sizing is dynamic, the size is 0 and
@@ -92,7 +89,7 @@ class ByteField(ABC):
         property_name (str): the property name of this field. This is the field name
                              in the ByteStruct class.
         visible (bool): if the field is visible. By default, this value is None,
-                        which means that the value cannot change visibility.
+                        which means that the field cannot change visibility.
                         Setting the value explicitly to True or False at instantiation
                         will result in the field being instance based and enable
                         toggling its visibility.
@@ -158,7 +155,7 @@ class ByteField(ABC):
     @property
     def min_offset(self):
         '''
-        Gets the real offset of this field in bytes, excluding any invisible fields.
+        Gets the minimum offset of this field in bytes, excluding any invisible fields.
         For more details, see ByteField.get_min_offset.
 
         Returns:
@@ -362,7 +359,7 @@ class ByteStruct(metaclass=StructBase):
             size: the new size to resize the field to, type dependant on the field being resized
         '''
         if not field.is_instance:
-            raise Exception('Non instance fields cannot be resized')
+            raise Exception('non instance fields cannot be resized')
 
         field = self._ensure_is_instanced(field)
         old_size = field.size
@@ -379,8 +376,8 @@ class ByteStruct(metaclass=StructBase):
         The method throws an exception if self.size > len(self.data).
         '''
         if self.size > len(self.data):
-            raise Exception('Overflow detected: fields after resize take more size than the struct data. '
-                            'Make sure to use resize_bytes=True in resize() to resize the underlying bytes')
+            raise OverflowError('overflow detected: fields after resize take more size than the struct data. '
+                                'Make sure to use resize_bytes=True in resize() to resize the underlying bytes')
 
     def _ensure_is_instanced(self, field: ByteField) -> ByteField:
         '''

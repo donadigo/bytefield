@@ -1,5 +1,3 @@
-
-
 from bytefields.format import _format_bytearray, _format_numpy
 from bytefields import base, fields
 import numpy as np
@@ -22,15 +20,58 @@ def _get_array_index(shape: tuple, index: tuple) -> int:
 
 
 class ArrayFieldProxy:
+    '''
+    An ArrayFieldProxy is a proxy object for ArrayFields that allows modifying and retrieval
+    of individual elements without examining the full array.
+
+    ArrayField and ArrayFieldProxy do not support storing
+    instanced fields with dynamic sizes. Storing StructFields is supported,
+    but in limited capacity. See ArrayField for more detail.
+
+    ArrayFieldProxy supports converting the data into a full numpy array
+    with the to_numpy() method, and supports tuple indexing such as
+
+        byte_struct.arr[0, 2] = 100
+
+    Slicing the array or retrieving parts of the array such as rows or columns
+    is not supported.
+
+    Attributes:
+        byte_struct (ByteStruct): the struct this proxy is attached to
+        field (ByteField): the specific field this proxy is attached to
+
+    Args:
+        byte_struct (ByteStruct): the struct this proxy to attach to
+        field (ByteField): the specific ArrayField to attach to
+    '''
     def __init__(self, byte_struct: base.ByteStruct, field: base.ByteField):
         self.byte_struct = byte_struct
         self.field = field
 
     @property
-    def shape(self):
+    def shape(self) -> tuple:
+        '''
+        Retrieves the shape of this proxy.
+        Always returns a tuple, if the array is one dimensional,
+        a tuple with one integer is returned
+
+        Returns:
+            tuple: the shape of the array proxy
+        '''
         return self.field.shape
 
-    def to_numpy(self):
+    def to_numpy(self) -> np.array:
+        '''
+        Converts the proxy into a numpy array reading all
+        the elements.
+
+        Note that to_numpy does not cache results and the
+        time to construct the full array is dependant on
+        the size of it.
+
+        Returns:
+            np.array: the full numpy array
+        '''
         arr = np.empty(self.shape, dtype=object)
         arr_offset = self.byte_struct.calc_field_offset(self.field)
         is_struct_field = isinstance(self.field._elem_field, fields.StructField)
@@ -73,12 +114,14 @@ class ArrayFieldProxy:
         if isinstance(index, int):
             index = (index,)
 
-        assert not any(map(lambda elem: isinstance(elem, slice), index)), \
-            'slices are not supported with ArrayFieldProxy'
+        if any(map(lambda elem: isinstance(elem, slice), index)):
+            raise NotImplementedError('slices are not supported with ArrayFieldProxy')
 
         user_index = index[:]
         index = _to_absolute_indices(self.shape, index)
-        assert index, f'Index {user_index} is out of bounds for shape {self.shape}'
+        if not index:
+            raise IndexError(f'index {user_index} is out of bounds for shape {self.shape}')
+
         return index
 
     def __len__(self):
@@ -90,11 +133,37 @@ class ArrayFieldProxy:
 
 
 class ByteArrayFieldProxy:
+    '''
+    A ByteArrayFieldProxy is a proxy object for ByteArrayFields that allows modifying
+    and retrieval of individual elements without examining the full array.
+
+    Just like ArrayFieldProxy, ByteArrayFieldProxy supports
+    converting the data into a full bytearray with the to_bytearray() method.
+
+    Slicing the array is not supported.
+
+    Attributes:
+        byte_struct (ByteStruct): the struct this proxy is attached to
+        field (ByteField): the specific field this proxy is attached to
+
+    Args:
+        byte_struct (ByteStruct): the struct this proxy to attach to
+        field (ByteField): the specific ArrayField to attach to
+    '''
     def __init__(self, byte_struct: base.ByteStruct, field: base.ByteField):
         self.byte_struct = byte_struct
         self.field = field
 
-    def to_bytearray(self):
+    def to_bytearray(self) -> bytearray:
+        '''
+        Converts the proxy into a bytearray reading all
+        the elements.
+
+        Note that to_bytearray does not cache results.
+
+        Returns:
+            bytearray: the full bytearray
+        '''
         offset = self._validate_offset()
         return self.byte_struct.data[offset:offset + self.field.size]
 
@@ -111,14 +180,16 @@ class ByteArrayFieldProxy:
     def _validate_offset(self):
         offset = self.byte_struct.calc_offset(self.field)
         if offset + self.field.size > len(self.byte_struct.data):
-            raise Exception('Failed to get value: field is out of bounds')
+            raise IndexError('failed to get value: field is out of bounds')
 
         return offset
 
     def _validate_index(self, index: int):
         user_index = index
         index = _to_absolute_indices((self.field.size,), (index,))
-        assert index, f'Index {user_index} is out of bounds for size {self.field.size}'
+        if not index:
+            raise IndexError(f'index {user_index} is out of bounds for size {self.field.size}')
+
         return index[0]
 
     def __len__(self):

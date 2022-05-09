@@ -85,7 +85,7 @@ def test_instances():
     assert inst3.arr_field != TestStruct.arr_field
 
     inst1.inner.inner_arr = ['000', '111', '222']
-    inst2.inner.inner_arr = ['333', '444', '555']
+    inst2.inner.inner_arr = ['222', '333', '444', '555']
 
     inst1.elements = [ElementStruct(elem=5), ElementStruct(elem=1)]
     inst2.resize(TestStruct.elements_field, 4, resize_bytes=True)
@@ -93,7 +93,7 @@ def test_instances():
     assert np.array_equal(inst1.inner.inner_arr.to_numpy(), ['000', '111', '222'])
     assert inst1.elements[0].elem, 5
     assert inst1.elements[1].elem, 1
-    assert np.array_equal(inst2.inner.inner_arr.to_numpy(), ['333', '444', '555'])
+    assert np.array_equal(inst2.inner.inner_arr.to_numpy(), ['222', '333', '444', '555'])
     assert inst2.elements[3].elem == 0
 
 
@@ -104,8 +104,22 @@ def test_variable():
     class Inner(ByteStruct):
         arr = ArrayField(0, None, StringField, length=2)
 
+    class Inner2(ByteStruct):
+        arr = ArrayField(0, None, StringField, length=4)
+
     s = Struct()
     s.resize(Struct.variable_field, StructField(0, Inner), resize_bytes=True)
     s.variable.arr = ['aa', 'bb', 'cc', 'dd']
     assert len(s.data) == 8
     assert np.array_equal(s.variable.arr.to_numpy(), ['aa', 'bb', 'cc', 'dd'])
+
+    s.resize(Struct.variable_field, StringField(0, length=8))
+    assert s.variable == 'aabbccdd'
+
+    s.resize(Struct.variable_field, StructField(0, Inner2))
+    s.variable.resize(Inner2.arr_field, 2)
+    s.variable.resize(Inner2.arr_field, 4, resize_bytes=True)
+
+    assert s.variable.arr[0] == 'aabb'
+    assert s.variable.arr[1] == 'ccdd'
+    assert len(s.data) == 16

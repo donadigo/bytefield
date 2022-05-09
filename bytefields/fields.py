@@ -20,13 +20,13 @@ class StructField(ByteField):
     set their master offset to the current offset of the StructField. This allows for
     accessing inner fields with native syntax:
 
-        master_struct.inner_struct.inner_int_field = 5
+        master_struct.inner_struct.inner_int = 5
 
     However, this also means that the value of StructField (a ByteStruct instance),
     is not valid after e.g. resizing a field inside the master struct:
 
         class Inner(ByteStruct):
-            inner_int_field = IntegerField(offset=0)
+            inner_int = IntegerField(offset=0)
 
         class Master(ByteStruct):
             bytes = ByteArrayField(offset=0, length=None)
@@ -36,11 +36,11 @@ class StructField(ByteField):
         inner = master_struct.inner_struct
         master_struct.resize('bytes', 8)
 
-        inner.inner_int_field = 5  # Invalid, the master struct changed its layout and
-                                   # the inner reference is now invalid
+        inner.inner_int = 5  # Invalid, the master struct changed its layout and
+                             # the inner reference is now invalid
 
-        master_struct.inner_struct.inner_int_field = 5  # Valid, accessing inner structs this way always
-                                                        # makes sure they are valid
+        master_struct.inner_struct.inner_int = 5  # Valid, accessing inner structs this way always
+                                                  # makes sure they are valid
 
         Attributes:
             offset (Tuple[ByteField, int]): the offset of this field
@@ -119,14 +119,14 @@ class SimpleField(ByteField):
     def _getvalue(self, byte_struct: ByteStruct):
         offset = byte_struct.calc_offset(self)
         if offset + self.size > len(byte_struct.data):
-            raise Exception('Failed to get value: field is out of bounds')
+            raise IndexError('failed to get value: field is out of bounds')
 
         return struct.unpack(self.format, byte_struct.data[offset:offset + self.size])[0]
 
     def _setvalue(self, byte_struct: ByteStruct, value):
         offset = byte_struct.calc_offset(self)
         if offset + self.size > len(byte_struct.data):
-            raise Exception('Failed to set value: field is out of bounds')
+            raise IndexError('failed to set value: field is out of bounds')
 
         byte_struct.data[offset:offset + self.size] = struct.pack(self.format, value)
 
@@ -136,14 +136,22 @@ class ByteArrayField(ByteField):
     ByteArrayField allows for slicing the underlying bytearray data,
     that can be interpreted later.
 
-    The returned value is a bytearray of size provided by the user, beginning
-    at index of the field's offset. The returned data is copied and modifying will
-    not change the source bytearray. To modify it, you need to explicitly set the field
-    to the new value:
+    Accessing a ByteArrayField does not directly return a bytearray.
+    Instead, a ByteArrayFieldProxy object is returned that allows for
+    modifying bytes inside the array individually without rewriting
+    the entire bytearray data. You can then call to_bytearray() on the proxy
+    object to retrieve the full bytearray:
 
-        val = byte_struct.byte_field
-        val[0] = 200
-        byte_struct.byte_field = val
+        class Struct(ByteStruct):
+            byte_array = ByteArrayField(0, None)
+
+        s = Struct()
+        s.byte_array = [1, 2, 3, 4, 5]
+        s.byte_array[2] = 2
+
+        print(s) # [ 01 02 02 04 05 ]
+        print(type(s.byte_array)) # s.byte_array is a ByteArrayFieldProxy object
+        print(s.byte_array.to_bytearray()) # call to_bytearray() to retrieve the full bytearray
 
     ByteArrayField supports variable sized bytearray chunks. To make the field
     dynamically sized, pass None to the length parameter and call
@@ -178,8 +186,8 @@ class ByteArrayField(ByteField):
 
         offset = byte_struct.calc_offset(self)
         if offset + self.size > len(byte_struct.data):
-            raise Exception(
-                f'Failed to set value: field at offset {offset} and size {self.size} '
+            raise IndexError(
+                f'failed to set value: field at offset {offset} and size {self.size} '
                 f'is out of bounds for struct with size {len(byte_struct.data)}'
             )
 
@@ -241,7 +249,7 @@ class IntegerField(SimpleField):
         elif size == 8:
             super().__init__(offset, f'{prefix}q' if signed else f'{prefix}Q', **kwargs)
         else:
-            raise Exception('size has to be either 8, 4, 2 or 1')
+            raise ValueError('size has to be either 8, 4, 2 or 1')
 
 
 class DoubleField(SimpleField):
@@ -358,8 +366,45 @@ class ArrayField(ByteField):
     sizes. In case of multi dimensional arrays, the elements are always
     parsed sequentially, but are reshaped into the target shape.
 
+    Accessing an ArrayField does not directly return a numpy array.
+    Instead, an ArrayFieldProxy object is returned that allows for
+    modifying elements inside the array individually without rewriting
+    the entire array data. You can then call to_numpy() on the proxy
+    object to retrieve the full array if you need to.
+
+    ArrayFields do not support storing instanced fields (such as dynamically
+    sized strings). The contained element type has to have a constant size.
+    Storing StructFields is supported, but the struct type cannot store
+    dynamically sized fields:
+
+        class Inner(ByteStruct):
+            i = IntegerField(0)
+            j = IntegerField(i)
+            # s = StringField(j, None); unsupported, this field makes the
+            # struct dynamically sized and cannot be stored inside the array
+
+
+        class Struct(ByteStruct):
+            arr = ArrayField(0, None, Inner)
+
+        s = Struct()
+        # Resize the array using the resize() method
+        s.resize(Struct.arr_field, 1, resize_bytes=True)
+        s.arr[0].i = 4
+        s.arr[0].j = 10
+
+        # Or set the full array
+        s.arr = [Inner(i=4, j=10)]
+
+        print(type(s.arr)) # s.arr is an ArrayFieldProxy object
+        print(s.arr.to_numpy()) # call to_numpy() to retrieve the full array
+
     To make the array dynamically sized, pass None as its shape and
     use byte_struct.resize() to resize the field to a new size.
+
+    You may pass a ByteStruct subclass type to the elem_field_type parameter
+    to create an array of structs. ArrayField will then automatically create
+    a StructField holding the struct type.
 
     Attributes:
         shape (tuple): the shape of the array
@@ -395,8 +440,8 @@ class ArrayField(ByteField):
                             f'got {elem_field_type.__name__}')
 
         # TODO: support instanced fields
-        assert not self._elem_field.is_instance or isinstance(self._elem_field, StructField), \
-            'instanced fields (with dynamic size) are currently not supported by ArrayField'
+        if self._elem_field.is_instance and not isinstance(self._elem_field, StructField):
+            raise NotImplementedError('instanced fields (with dynamic size) are currently not supported by ArrayField')
 
         if shape:
             self.shape = (shape,) if isinstance(shape, int) else shape[:]

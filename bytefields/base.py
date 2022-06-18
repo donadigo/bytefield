@@ -1,5 +1,6 @@
 
 from abc import ABC, abstractmethod
+import bytefields.fields
 from copy import deepcopy
 from typing import Iterable, Tuple
 import numpy as np
@@ -37,7 +38,7 @@ class StructBase(type):
             if not isinstance(field, ByteField):
                 continue
 
-            if key == 'data' or key == 'master_offset':
+            if key == 'data' or key == 'master_offset' or key == 'size':
                 raise KeyError(f'a field cannot have a name of "{key}". '
                                'To resolve, rename the field to something else')
 
@@ -46,6 +47,9 @@ class StructBase(type):
                 attrs[key] = property(field._get_instance_value, field._set_instance_value)
             else:
                 attrs[key] = property(field._getvalue, field._setvalue)
+
+            if field.offset is None:
+                field.offset = 0 if last_field is None else last_field
 
             attrs[field.property_name] = field
             field_offset = field.get_min_offset(False)
@@ -79,9 +83,9 @@ class ByteField(ABC):
 
     Attributes:
         offset (Tuple[ByteField, int]): the offset of this field in bytes.
-                                          The offset may be a constant integer byte offset,
-                                          or another instance of ByteField, which means that
-                                          this field directly follows that instance offset.
+                                        The offset may be None, constant integer byte offset,
+                                        or another instance of ByteField, which means that
+                                        this field directly follows that instance offset.
         size (int): the size of this field. If the sizing is dynamic, the size is 0 and
                     the field is instance based.
         is_instance (bool): if the field is instance based, it is copied per
@@ -105,6 +109,19 @@ class ByteField(ABC):
         self.visible = kwargs.pop('visible', None)
         if self.visible is not None:
             self.is_instance = True
+
+    def get_size(self, byte_struct):
+        '''
+        Gets the size of the ByteField, provided the ByteStruct. You may override this method
+        if you the size of your field depends on the parent ByteStruct.
+
+        Args:
+            byte_struct (ByteStruct): the ByteStruct that the size is calculated for
+
+        Returns:
+            the size of this field in bytes
+        '''
+        return self.size
 
     @abstractmethod
     def _getvalue(self, byte_struct):
@@ -141,7 +158,7 @@ class ByteField(ABC):
         and that you are not modifying the size of fields in all existing struct instances.
 
             class Struct(ByteStruct):
-                a = ArrayField(0, None, IntegerField)
+                a = ArrayField(None, IntegerField)
 
             s = Struct([10, 0, 0, 0, 20, 0, 0, 0])
             s.resize(S.a_field, 2)
@@ -216,9 +233,9 @@ class ByteField(ABC):
         byte_struct (ByteStruct): the target byte struct that the field is in
         value: the value to resize to
         '''
-        old_size = self.size
+        old_size = self.get_size(byte_struct)
         self.resize(value)
-        if old_size != self.size:
+        if old_size != self.get_size(byte_struct):
             byte_struct._resize_data(self, old_size)
 
 
@@ -314,11 +331,11 @@ class ByteStruct(metaclass=StructBase):
         if not self.__class__.last_field:
             return 0
 
-        last_field = getattr(self, self.__class__.last_field.property_name)
+        last_field = self._ensure_is_instanced(self.__class__.last_field)
         if not last_field:
             return 0
 
-        return self.calc_field_offset(last_field) + last_field.size
+        return self.calc_field_offset(last_field) + last_field.get_size(self)
 
     def resize(self, field: ByteField, size, resize_bytes: bool = False):
         '''
@@ -336,7 +353,7 @@ class ByteStruct(metaclass=StructBase):
         from the end of its data.
 
             class Struct(ByteStruct):
-                arr = ArrayField(0, None, IntegerField)
+                arr = ArrayField(None, IntegerField)
 
             s = Struct()
             # Resize the array field to contain 4 elements, adding the
@@ -362,7 +379,7 @@ class ByteStruct(metaclass=StructBase):
             raise Exception('non instance fields cannot be resized')
 
         field = self._ensure_is_instanced(field)
-        old_size = field.size
+        old_size = field.get_size(self)
         field.resize(size)
         if resize_bytes:
             self._resize_data(field, old_size)
@@ -422,7 +439,7 @@ class ByteStruct(metaclass=StructBase):
         '''
         offset = self.calc_offset(resizing_field)
 
-        new_size = resizing_field.size
+        new_size = resizing_field.get_size(self)
 
         # Make sure to modify in-place
         if old_size > new_size:
@@ -467,8 +484,10 @@ class ByteStruct(metaclass=StructBase):
         if isinstance(field.offset, int):
             return field.offset
 
-        instance_offset = getattr(self, field.offset.property_name)
-        return self.calc_field_offset(instance_offset) + instance_offset.size
+        instance_offset = self._ensure_is_instanced(field.offset)
+        instance_offset._getvalue(self)
+        # instance_offset = getattr(self, field.offset.property_name)
+        return self.calc_field_offset(instance_offset) + instance_offset.get_size(self)
 
     def _print(self, indent_level: int) -> str:
         '''

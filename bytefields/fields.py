@@ -26,15 +26,15 @@ class StructField(ByteField):
     is not valid after e.g. resizing a field inside the master struct:
 
         class Inner(ByteStruct):
-            inner_int = IntegerField(offset=0)
+            inner_int = IntegerField()
 
         class Master(ByteStruct):
-            bytes = ByteArrayField(offset=0, length=None)
-            inner_struct = StructField(offset=bytes, Inner)
+            bytes = ByteArrayField(length=None)
+            inner_struct = StructField(Inner)
 
         master_struct = Master()
         inner = master_struct.inner_struct
-        master_struct.resize('bytes', 8)
+        master_struct.resize(Master.bytes_field, 8)
 
         inner.inner_int = 5  # Invalid, the master struct changed its layout and
                              # the inner reference is now invalid
@@ -43,30 +43,31 @@ class StructField(ByteField):
                                                   # makes sure they are valid
 
         Attributes:
-            offset (Tuple[ByteField, int]): the offset of this field
             struct_type (type): the ByteStruct type that this field holds
             size (int): the size of this field in bytes
             is_instance (bool): always True, the field is always only an instance field
             inner: the inner struct that is being stored
-
+            offset (Tuple[ByteField, int]): the offset of this field
         Args:
             offset (Tuple[ByteField, int]): the offset of this field
             struct_type (type): the ByteStruct type that this field holds
     '''
-    def __init__(self, offset: Tuple[ByteField, int], struct_type: type, **kwargs):
+    def __init__(self, struct_type: type, offset: Tuple[ByteField, int] = None, **kwargs):
         assert issubclass(struct_type, ByteStruct), 'struct_type must be an inheritant of type ByteStruct'
-        self.offset = offset
         self.struct_type = struct_type
+        self.offset = offset
         self.is_instance = True
         self.inner = None
+        self.size = self.struct_type.min_size
         super().__init__(**kwargs)
 
-    @property
-    def size(self):
-        if self.inner:
-            return self.inner.size
-        else:
-            return self.struct_type.min_size
+    def get_size(self, byte_struct: ByteStruct):
+        if not self.inner:
+            # The user may resize fields inside his own ByteStruct subclass, so we have to
+            # make sure to instantiate inner to get the proper size.
+            self.inner = self.struct_type(byte_struct.data, byte_struct.calc_offset(self))
+
+        return self.inner.size
 
     def reset(self):
         self.inner = None
@@ -102,17 +103,16 @@ class SimpleField(ByteField):
     https://docs.python.org/3/library/struct.html to view this format specification.
 
     Attributes:
-        offset (Tuple[ByteField, int]): the offset of this field
         format (str): the format this field uses to interpret the data
         size (int): the size of this field in bytes
-
+        offset (Tuple[ByteField, int]): the offset of this field, None by default
     Args:
         offset (Tuple[ByteField, int]): the offset of this field
         struct_format (str): the format this field should use to interpret the data
     '''
-    def __init__(self, offset: Tuple[ByteField, int], struct_format: str, **kwargs):
-        self.offset = offset
+    def __init__(self, struct_format: str, offset: Tuple[ByteField, int] = None, **kwargs):
         self.format = struct_format
+        self.offset = offset
         self.size = struct.calcsize(struct_format)
         super().__init__(**kwargs)
 
@@ -143,7 +143,7 @@ class ByteArrayField(ByteField):
     object to retrieve the full bytearray:
 
         class Struct(ByteStruct):
-            byte_array = ByteArrayField(0, None)
+            byte_array = ByteArrayField(None)
 
         s = Struct()
         s.byte_array = [1, 2, 3, 4, 5]
@@ -161,7 +161,7 @@ class ByteArrayField(ByteField):
         offset (Tuple[ByteField, int]): the offset of this field
         length (int): the length of the sliced array in bytes
     '''
-    def __init__(self, offset: Tuple[ByteField, int], length: int, **kwargs):
+    def __init__(self, length: int, offset: Tuple[ByteField, int] = None, **kwargs):
         self.offset = offset
         if length is None:
             self.size = 0
@@ -233,21 +233,21 @@ class IntegerField(SimpleField):
     '''
     def __init__(
         self,
-        offset: Tuple[ByteField, int],
         signed: bool = True,
         size: int = 4,
         endianness: Endianness = Endianness.NATIVE,
+        offset: Tuple[ByteField, int] = None,
         **kwargs
     ):
         prefix = endianness.to_format()
         if size == 4:
-            super().__init__(offset, f'{prefix}i' if signed else f'{prefix}I', **kwargs)
+            super().__init__(f'{prefix}i' if signed else f'{prefix}I', offset=offset, **kwargs)
         elif size == 2:
-            super().__init__(offset, f'{prefix}h' if signed else f'{prefix}H', **kwargs)
+            super().__init__(f'{prefix}h' if signed else f'{prefix}H', offset=offset, **kwargs)
         elif size == 1:
-            super().__init__(offset, f'{prefix}b' if signed else f'{prefix}B', **kwargs)
+            super().__init__(f'{prefix}b' if signed else f'{prefix}B', offset=offset, **kwargs)
         elif size == 8:
-            super().__init__(offset, f'{prefix}q' if signed else f'{prefix}Q', **kwargs)
+            super().__init__(f'{prefix}q' if signed else f'{prefix}Q', offset=offset, **kwargs)
         else:
             raise ValueError('size has to be either 8, 4, 2 or 1')
 
@@ -261,9 +261,9 @@ class DoubleField(SimpleField):
         offset (Tuple[ByteField, int]): the offset of this field
         endianness (Endianness): the endianness of the double, Endianness.NATIVE by default
     '''
-    def __init__(self, offset: Tuple[ByteField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
+    def __init__(self, endianness: Endianness = Endianness.NATIVE, offset: Tuple[ByteField, int] = None, **kwargs):
         prefix = endianness.to_format()
-        super().__init__(offset, f'{prefix}d', **kwargs)
+        super().__init__(f'{prefix}d', offset=offset, **kwargs)
 
 
 class FloatField(SimpleField):
@@ -275,9 +275,9 @@ class FloatField(SimpleField):
         offset (Tuple[ByteField, int]): the offset of this field
         endianness (Endianness): the endianness of the double, Endianness.NATIVE by default
     '''
-    def __init__(self, offset: Tuple[ByteField, int], endianness: Endianness = Endianness.NATIVE, **kwargs):
+    def __init__(self, endianness: Endianness = Endianness.NATIVE, offset: Tuple[ByteField, int] = None, **kwargs):
         prefix = endianness.to_format()
-        super().__init__(offset, f'{prefix}f', **kwargs)
+        super().__init__(f'{prefix}f', offset=offset, **kwargs)
 
 
 class BooleanField(IntegerField):
@@ -296,8 +296,8 @@ class BooleanField(IntegerField):
     Keyword Args:
         size (int): the size of the BooleanField in bytes
     '''
-    def __init__(self, offset: Tuple[ByteField, int], **kwargs):
-        super().__init__(offset, signed=False, **kwargs)
+    def __init__(self, offset: Tuple[ByteField, int] = None, **kwargs):
+        super().__init__(signed=False, offset=offset, **kwargs)
 
     def _getvalue(self, byte_struct: ByteStruct) -> bool:
         return bool(super()._getvalue(byte_struct))
@@ -330,13 +330,13 @@ class StringField(SimpleField):
         length (int): the length of the string in bytes
         encoding (str): the encoding of the string, from Standard Encodings of the codecs module
     '''
-    def __init__(self, offset: Tuple[ByteField, int], length: int, encoding='utf-8', **kwargs):
+    def __init__(self, length: int, encoding='utf-8', offset: Tuple[ByteField, int] = None, **kwargs):
         self.encoding = encoding
         if length is None:
             self.is_instance = True
-            super().__init__(offset, '0s', **kwargs)
+            super().__init__('0s', offset=offset, **kwargs)
         else:
-            super().__init__(offset, f'{length}s', **kwargs)
+            super().__init__(f'{length}s', offset=offset, **kwargs)
 
     def resize(self, length: int):
         self.size = length
@@ -378,14 +378,14 @@ class ArrayField(ByteField):
     dynamically sized fields:
 
         class Inner(ByteStruct):
-            i = IntegerField(0)
-            j = IntegerField(i)
-            # s = StringField(j, None); unsupported, this field makes the
+            i = IntegerField()
+            j = IntegerField()
+            # s = StringField(None); unsupported, this field makes the
             # struct dynamically sized and cannot be stored inside the array
 
 
         class Struct(ByteStruct):
-            arr = ArrayField(0, None, Inner)
+            arr = ArrayField(None, Inner)
 
         s = Struct()
         # Resize the array using the resize() method
@@ -424,17 +424,17 @@ class ArrayField(ByteField):
     '''
     def __init__(
         self,
-        offset: Tuple[ByteField, int],
         shape: Tuple[tuple, int],
         elem_field_type: type,
+        offset: Tuple[ByteField, int] = None,
         **kwargs
     ):
         self.offset = offset
 
         if issubclass(elem_field_type, ByteField):
-            self._elem_field = elem_field_type(0, **kwargs)
+            self._elem_field = elem_field_type(offset=0, **kwargs)
         elif issubclass(elem_field_type, ByteStruct):
-            self._elem_field = StructField(0, elem_field_type)
+            self._elem_field = StructField(elem_field_type, offset=0)
         else:
             raise Exception('elem_field_type has to be a subclass of ByteField or ByteStruct, '
                             f'got {elem_field_type.__name__}')
@@ -488,10 +488,10 @@ class VariableField(ByteField):
     call the resize method of its parent ByteStruct:
 
         class Struct(ByteStruct):
-            variable = VariableField(0)
+            variable = VariableField()
 
         byte_struct = Struct()
-        byte_struct.resize(Struct.variable_field, IntegerField(0, size=2), resize_bytes=True)
+        byte_struct.resize(Struct.variable_field, IntegerField(size=2), resize_bytes=True)
         byte_struct.variable = 5
 
     Note that trying to set the VariableField without resizing it first
@@ -504,14 +504,14 @@ class VariableField(ByteField):
     Args:
         offset (Tuple[ByteField, int]): the offset of this field
     '''
-    def __init__(self, offset: Tuple[ByteField, int], **kwargs):
+    def __init__(self, offset: Tuple[ByteField, int] = None, **kwargs):
         self.offset = offset
         self.child = None
         self.is_instance = True
+        self.size = 0
 
-    @property
-    def size(self):
-        return self.child.size if self.child else 0
+    def get_size(self, byte_struct):
+        return self.child.get_size(byte_struct) if self.child else 0
 
     def resize(self, child: ByteField):
         self.child = child
@@ -546,6 +546,9 @@ def unpack_bytes(data: Tuple[bytearray, bytes, ByteStruct], field: ByteField):
     Returns:
         the interpreted value
     '''
+    if field.offset is None:
+        field.offset = 0
+
     if isinstance(data, ByteStruct):
         return field._getvalue(data)
 
@@ -565,6 +568,9 @@ def pack_value(value, field: ByteField) -> bytearray:
     Returns:
         bytearray: the resulting bytes of the encoding
     '''
+    if field.offset is None:
+        field.offset = 0
+
     byte_struct = ByteStruct(bytearray(field.min_offset + field.size))
     field._setvalue(byte_struct, value)
     return byte_struct.data

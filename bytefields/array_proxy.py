@@ -169,8 +169,7 @@ class ByteArrayFieldProxy:
             bytearray: the full bytearray
         '''
         offset = self._validate_offset()
-        data = self.byte_struct._get_instance_data(self.field)
-        return self.byte_struct.data[offset:offset + data['size']]
+        return self.byte_struct.data[offset:offset + len(self)]
 
     def __getitem__(self, index: int):
         offset = self._validate_offset()
@@ -184,22 +183,23 @@ class ByteArrayFieldProxy:
 
     def _validate_offset(self):
         offset = self.byte_struct.calc_offset(self.field)
-        data = self.byte_struct._get_instance_data(self.field)
-        if offset + data['size'] > len(self.byte_struct.data):
+        if offset + len(self) > len(self.byte_struct.data):
             raise IndexError('failed to get value: field is out of bounds')
 
         return offset
 
     def _validate_index(self, index: int):
-        data = self.byte_struct._get_instance_data(self.field)
         user_index = index
-        index = _to_absolute_indices((data['size'],), (index,))
+        index = _to_absolute_indices((len(self),), (index,))
         if not index:
             raise IndexError(f'index {user_index} is out of bounds for size {self.field.size}')
 
         return index[0]
 
     def __len__(self):
+        if not self.field.is_instance:
+            return self.field.size
+
         data = self.byte_struct._get_instance_data(self.field)
         return data['size']
 

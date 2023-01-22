@@ -58,7 +58,11 @@ class ArrayFieldProxy:
         Returns:
             tuple: the shape of the array proxy
         '''
-        return self.field.shape
+        data = self.byte_struct._get_instance_data(self.field)
+        if not data.get('shape'):
+            data['shape'] = self.field.shape
+
+        return data['shape']
 
     def to_numpy(self) -> np.array:
         '''
@@ -76,12 +80,12 @@ class ArrayFieldProxy:
         arr_offset = self.byte_struct.calc_field_offset(self.field)
         is_struct_field = isinstance(self.field._elem_field, fields.StructField)
         for index in np.ndindex(self.shape):
-            self.field._elem_field.offset = (
+            self.field._elem_field.computed_offset = (
                 arr_offset + _get_array_index(self.shape, index) * self.field._elem_field.size
             )
 
             if is_struct_field:
-                self.field._elem_field.reset()
+                self.field._elem_field.reset(self.byte_struct)
 
             arr[index] = self.field._elem_field._getvalue(self.byte_struct)
 
@@ -91,12 +95,12 @@ class ArrayFieldProxy:
         index = self._validate_index(index)
 
         arr_offset = self.byte_struct.calc_field_offset(self.field)
-        self.field._elem_field.offset = (
+        self.field._elem_field.computed_offset = (
             arr_offset + _get_array_index(self.shape, index) * self.field._elem_field.size
         )
 
         if isinstance(self.field._elem_field, fields.StructField):
-            self.field._elem_field.reset()
+            self.field._elem_field.reset(self.byte_struct)
 
         return self.field._elem_field._getvalue(self.byte_struct)
 
@@ -104,7 +108,7 @@ class ArrayFieldProxy:
         index = self._validate_index(index)
 
         arr_offset = self.byte_struct.calc_field_offset(self.field)
-        self.field._elem_field.offset = (
+        self.field._elem_field.computed_offset = (
             arr_offset + _get_array_index(self.shape, index) * self.field._elem_field.size
         )
 
@@ -165,7 +169,8 @@ class ByteArrayFieldProxy:
             bytearray: the full bytearray
         '''
         offset = self._validate_offset()
-        return self.byte_struct.data[offset:offset + self.field.size]
+        data = self.byte_struct._get_instance_data(self.field)
+        return self.byte_struct.data[offset:offset + data['size']]
 
     def __getitem__(self, index: int):
         offset = self._validate_offset()
@@ -179,21 +184,24 @@ class ByteArrayFieldProxy:
 
     def _validate_offset(self):
         offset = self.byte_struct.calc_offset(self.field)
-        if offset + self.field.size > len(self.byte_struct.data):
+        data = self.byte_struct._get_instance_data(self.field)
+        if offset + data['size'] > len(self.byte_struct.data):
             raise IndexError('failed to get value: field is out of bounds')
 
         return offset
 
     def _validate_index(self, index: int):
+        data = self.byte_struct._get_instance_data(self.field)
         user_index = index
-        index = _to_absolute_indices((self.field.size,), (index,))
+        index = _to_absolute_indices((data['size'],), (index,))
         if not index:
             raise IndexError(f'index {user_index} is out of bounds for size {self.field.size}')
 
         return index[0]
 
     def __len__(self):
-        return self.field.size
+        data = self.byte_struct._get_instance_data(self.field)
+        return data['size']
 
     def __repr__(self) -> str:
         bytes_repr = _format_bytearray(self.to_bytearray())

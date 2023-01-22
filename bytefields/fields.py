@@ -54,45 +54,56 @@ class StructField(ByteField):
     '''
     def __init__(self, struct_type: type, offset: Tuple[ByteField, int] = None, **kwargs):
         assert issubclass(struct_type, ByteStruct), 'struct_type must be an inheritant of type ByteStruct'
+        super().__init__(offset, struct_type.min_size, **kwargs)
         self.struct_type = struct_type
         self.offset = offset
         self.is_instance = True
-        self.inner = None
-        self.size = self.struct_type.min_size
-        super().__init__(**kwargs)
+        self.size_includes_computation = True
+
+    def reset(self, byte_struct):
+        data = byte_struct._get_instance_data(self)
+        data['inner'] = None
 
     def get_size(self, byte_struct: ByteStruct):
-        if not self.inner:
+        data = byte_struct._get_instance_data(self)
+        if not data.get('inner'):
             # The user may resize fields inside his own ByteStruct subclass, so we have to
             # make sure to instantiate inner to get the proper size.
-            self.inner = self.struct_type(byte_struct.data, byte_struct.calc_offset(self))
+            return self.size
 
-        return self.inner.size
-
-    def reset(self):
-        self.inner = None
+        return data['inner'].size
 
     def _getvalue(self, byte_struct: ByteStruct):
+        data = byte_struct._get_instance_data(self)
         # We have to update both the data and master_offset of the inner struct:
         # the inner data can come from user code and master_offset is dependant
         # on the sizing of dynamic fields
-        if not self.inner:
-            self.inner = self.struct_type(byte_struct.data, byte_struct.calc_offset(self))
+        if not data.get('inner'):
+            data['inner'] = self.struct_type(byte_struct.data, byte_struct.calc_offset(self))
         else:
-            self.inner.data = byte_struct.data
-            self.inner.master_offset = byte_struct.calc_offset(self)
+            data['inner'].data = byte_struct.data
+            data['inner'].master_offset = byte_struct.calc_offset(self)
 
-        return self.inner
+        return data['inner']
 
     def _setvalue(self, byte_struct: ByteStruct, value):
-        old_size = self.size
-        self.inner = deepcopy(value)
-        new_size = self.size
+        data = byte_struct._get_instance_data(self)
+        old_inner = data.get('inner')
+        if old_inner:
+            old_size = old_inner.size
+        else:
+            old_size = 0
+
+        data['inner'] = value
+        new_size = data['inner'].size
         if new_size != old_size:
             byte_struct._resize_data(self, old_size)
 
         offset = byte_struct.calc_offset(self)
         byte_struct.data[offset:offset + new_size] = value.data[:]
+
+        data['inner'].data = byte_struct.data
+        data['inner'].master_offset = byte_struct.calc_offset(self)
 
 
 class SimpleField(ByteField):
@@ -113,8 +124,7 @@ class SimpleField(ByteField):
     def __init__(self, struct_format: str, offset: Tuple[ByteField, int] = None, **kwargs):
         self.format = struct_format
         self.offset = offset
-        self.size = struct.calcsize(struct_format)
-        super().__init__(**kwargs)
+        super().__init__(offset, struct.calcsize(struct_format), **kwargs)
 
     def _getvalue(self, byte_struct: ByteStruct):
         offset = byte_struct.calc_offset(self)
@@ -162,30 +172,27 @@ class ByteArrayField(ByteField):
         length (int): the length of the sliced array in bytes
     '''
     def __init__(self, length: int, offset: Tuple[ByteField, int] = None, **kwargs):
-        self.offset = offset
-        if length is None:
-            self.size = 0
-            self.is_instance = True
-        else:
-            self.size = length
+        self.is_instance = length is None
 
-        super().__init__(**kwargs)
+        super().__init__(offset, length or 0, **kwargs)
 
-    def resize(self, length: int):
-        self.size = length
+    def resize(self, length: int, byte_struct):
+        data = byte_struct._get_instance_data(self)
+        data['size'] = length
 
     def _getvalue(self, byte_struct: ByteStruct):
         return ByteArrayFieldProxy(byte_struct, self)
 
     def _setvalue(self, byte_struct: ByteStruct, value):
+        data = byte_struct._get_instance_data(self)
         new_length = len(value)
-        if self.is_instance and new_length != self.size:
+        if new_length != data['size']:
             self._resize_with_data(byte_struct, new_length)
         else:
             assert new_length == self.size, f'bytearray size {new_length} not matching, should be {self.size}'
 
         offset = byte_struct.calc_offset(self)
-        if offset + self.size > len(byte_struct.data):
+        if offset + data['size'] > len(byte_struct.data):
             raise IndexError(
                 f'failed to set value: field at offset {offset} and size {self.size} '
                 f'is out of bounds for struct with size {len(byte_struct.data)}'
@@ -306,7 +313,7 @@ class BooleanField(IntegerField):
         return super()._setvalue(byte_struct, int(value))
 
 
-class StringField(SimpleField):
+class StringField(ByteField):
     '''
     A StringField interprets strings of constant or variable size with the
     specified encoding.
@@ -332,25 +339,45 @@ class StringField(SimpleField):
     '''
     def __init__(self, length: int, encoding='utf-8', offset: Tuple[ByteField, int] = None, **kwargs):
         self.encoding = encoding
-        if length is None:
-            self.is_instance = True
-            super().__init__('0s', offset=offset, **kwargs)
-        else:
-            super().__init__(f'{length}s', offset=offset, **kwargs)
+        self.is_instance = length is None
+        super().__init__(offset, length or 0, **kwargs)
 
-    def resize(self, length: int):
-        self.size = length
-        self.format = f'{self.size}s'
+        if self.is_instance:
+            self.format = '0s'
+        else:
+            self.format = f'{self.size}s'
+
+    def resize(self, length: int, byte_struct):
+        data = byte_struct._get_instance_data(self)
+        data['size'] = length
 
     def _getvalue(self, byte_struct: ByteStruct) -> str:
-        return super()._getvalue(byte_struct).decode(self.encoding)
+        size = self.get_size(byte_struct)
+        offset = byte_struct.calc_offset(self)
+        if offset + size > len(byte_struct.data):
+            raise IndexError('failed to get value: field is out of bounds')
+
+        return struct.unpack(f'{size}s', byte_struct.data[offset:offset + size])[0].decode(self.encoding)
 
     def _setvalue(self, byte_struct: ByteStruct, value: str):
         new_length = len(value)
-        if self.is_instance and new_length != self.size:
+
+        offset = byte_struct.calc_offset(self)
+        if not self.is_instance:
+            assert new_length == self.size, \
+                f'failed to set value: string is length is not equal to {self.size} characters'
+
+            byte_struct.data[offset:offset + self.size] = struct.pack(self.format, value.encode(self.encoding))
+            return
+
+        data = byte_struct._get_instance_data(self)
+        if offset + data['size'] > len(byte_struct.data):
+            raise IndexError('failed to set value: field is out of bounds')
+
+        if new_length != data['size']:
             self._resize_with_data(byte_struct, new_length)
 
-        return super()._setvalue(byte_struct, value.encode(self.encoding))
+        byte_struct.data[offset:offset + data['size']] = struct.pack(f'{data["size"]}s', value.encode(self.encoding))
 
 
 class ArrayField(ByteField):
@@ -429,8 +456,6 @@ class ArrayField(ByteField):
         offset: Tuple[ByteField, int] = None,
         **kwargs
     ):
-        self.offset = offset
-
         if issubclass(elem_field_type, ByteField):
             self._elem_field = elem_field_type(offset=0, **kwargs)
         elif issubclass(elem_field_type, ByteStruct):
@@ -447,16 +472,14 @@ class ArrayField(ByteField):
             self.shape = (shape,) if isinstance(shape, int) else shape[:]
         else:
             self.shape = (0,)
-            self.is_instance = True
+        self.is_instance = True
 
-        self._update_size()
+        super().__init__(offset, self._elem_field.size * int(np.prod(self.shape)), **kwargs)
 
-    def resize(self, shape: Tuple[tuple, int]):
-        self.shape = (shape,) if isinstance(shape, int) else shape[:]
-        self._update_size()
-
-    def _update_size(self):
-        self.size = self._elem_field.size * int(np.prod(self.shape))
+    def resize(self, shape: Tuple[tuple, int], byte_struct):
+        data = byte_struct._get_instance_data(self)
+        data['shape'] = (shape,) if isinstance(shape, int) else shape[:]
+        data['size'] = self._elem_field.get_size(byte_struct) * int(np.prod(data['shape']))
 
     def _getvalue(self, byte_struct: ByteStruct) -> np.array:
         return ArrayFieldProxy(byte_struct, self)
@@ -465,17 +488,21 @@ class ArrayField(ByteField):
         if isinstance(value, np.ndarray):
             assert value.shape == self.shape, f'array shape {value.shape} not matching, should be {self.shape}'
 
+        data = byte_struct._get_instance_data(self)
+        if 'shape' not in data:
+            data['shape'] = self.shape
+
         value_shape = np.array(value).shape
-        if self.is_instance and value_shape != self.shape:
+        if value_shape != data['shape']:
             self._resize_with_data(byte_struct, value_shape)
 
-        arr = np.empty(self.shape, dtype=object)
+        arr = np.empty(data['shape'], dtype=object)
         arr[:] = value
 
         arr_offset = byte_struct.calc_field_offset(self)
-        for index in np.ndindex(self.shape):
-            self._elem_field.offset = (
-                arr_offset + _get_array_index(self.shape, index) * self._elem_field.size
+        for index in np.ndindex(data['shape']):
+            self._elem_field.computed_offset = (
+                arr_offset + _get_array_index(data['shape'], index) * self._elem_field.size
             )
 
             self._elem_field._setvalue(byte_struct, arr[index])
@@ -505,31 +532,36 @@ class VariableField(ByteField):
         offset (Tuple[ByteField, int]): the offset of this field
     '''
     def __init__(self, offset: Tuple[ByteField, int] = None, **kwargs):
-        self.offset = offset
-        self.child = None
         self.is_instance = True
-        self.size = 0
+        super().__init__(offset, 0, **kwargs)
 
     def get_size(self, byte_struct):
-        return self.child.get_size(byte_struct) if self.child else 0
+        data = byte_struct._get_instance_data(self)
+        if 'child' not in data:
+            data['child'] = None
 
-    def resize(self, child: ByteField):
-        self.child = child
-        self.child.offset = self.offset
+        return data['child'].get_size(byte_struct) if data['child'] else 0
+
+    def resize(self, child: ByteField, byte_struct):
+        data = byte_struct._get_instance_data(self)
+        data['child'] = child
+        data['child'].computed_offset = self.computed_offset
+        data['size'] = child.get_size(byte_struct)
 
     def _getvalue(self, byte_struct: ByteStruct):
-        if not self.child:
+        data = byte_struct._get_instance_data(self)
+        if not data.get('child'):
             return None
 
-        return self.child._getvalue(byte_struct)
+        return data['child']._getvalue(byte_struct)
 
     def _setvalue(self, byte_struct: ByteStruct, value):
-        if not self.child:
+        data = byte_struct._get_instance_data(self)
+        if not data.get('child'):
             raise Exception('VariableField does not contain any field, '
                             'call resize() with the field instance you want to store')
 
-        val = self.child._setvalue(byte_struct, value)
-        return val
+        data['child']._setvalue(byte_struct, value)
 
 
 def unpack_bytes(data: Tuple[bytearray, bytes, ByteStruct], field: ByteField):
@@ -571,6 +603,6 @@ def pack_value(value, field: ByteField) -> bytearray:
     if field.offset is None:
         field.offset = 0
 
-    byte_struct = ByteStruct(bytearray(field.min_offset + field.size))
+    byte_struct = ByteStruct(bytearray(field.computed_offset + field.size))
     field._setvalue(byte_struct, value)
     return byte_struct.data

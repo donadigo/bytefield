@@ -74,15 +74,10 @@ def test_instances():
     inst1.arr = [1, 2, 3]
     inst2.arr = [4, 5, 6, 7]
 
-    assert inst1.arr_field != TestStruct.arr_field
-    assert inst2.arr_field != TestStruct.arr_field
-
     assert np.array_equal(inst1.arr.to_numpy(), [1, 2, 3])
     assert np.array_equal(inst2.arr.to_numpy(), [4, 5, 6, 7])
 
-    assert inst3.arr_field == TestStruct.arr_field
     assert inst3.arr.shape == (0,)
-    assert inst3.arr_field != TestStruct.arr_field
 
     inst1.inner.inner_arr = ['000', '111', '222']
     inst2.inner.inner_arr = ['222', '333', '444', '555']
@@ -91,8 +86,8 @@ def test_instances():
     inst2.resize(TestStruct.elements_field, 4, resize_bytes=True)
 
     assert np.array_equal(inst1.inner.inner_arr.to_numpy(), ['000', '111', '222'])
-    assert inst1.elements[0].elem, 5
-    assert inst1.elements[1].elem, 1
+    assert inst1.elements[0].elem == 5
+    assert inst1.elements[1].elem == 1
     assert np.array_equal(inst2.inner.inner_arr.to_numpy(), ['222', '333', '444', '555'])
     assert inst2.elements[3].elem == 0
 

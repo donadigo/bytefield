@@ -32,7 +32,8 @@ class StructBase(type):
     def __new__(cls, name, bases, attrs):
         struct_size = 0
         last_field = None
-        max_field_offset = -1
+
+        instance_fields = []
 
         for key, field in attrs.copy().items():
             if not isinstance(field, ByteField):
@@ -43,21 +44,28 @@ class StructBase(type):
                                'To resolve, rename the field to something else')
 
             field.property_name = f'{key}_field'
-            if field.is_instance:
-                attrs[key] = property(field._get_instance_value, field._set_instance_value)
-            else:
-                attrs[key] = property(field._getvalue, field._setvalue)
+            attrs[key] = property(field._getvalue, field._setvalue)
 
-            if field.offset is None:
-                field.offset = 0 if last_field is None else last_field
+            if last_field is None:
+                field.computed_offset = field.offset if field.offset else 0
+            else:
+                field.computed_offset = last_field.computed_offset
+                if not last_field.size_includes_computation:
+                    field.computed_offset += last_field.size
+
+            field.instance_fields = instance_fields[:]
+
+            if field.is_instance:
+                instance_fields.append(field)
 
             attrs[field.property_name] = field
-            field_offset = field.get_min_offset(False)
-            struct_size = max(struct_size, field_offset + field.size)
+            new_size = field.computed_offset + field.size
+            if last_field and last_field.size_includes_computation:
+                new_size += last_field.size
 
-            if field_offset > max_field_offset or (field_offset == max_field_offset and field.offset == last_field):
-                last_field = field
-                max_field_offset = field_offset
+            struct_size = max(struct_size, new_size)
+
+            last_field = field
 
         attrs['min_size'] = struct_size
         attrs['last_field'] = last_field
@@ -99,21 +107,25 @@ class ByteField(ABC):
                         toggling its visibility.
     '''
     offset: Tuple[object, int]
+    computed_offset: int
+    instanced_fields: list
     size: int
+    min_size: int
     is_instance: bool = False
     property_name: str
-    visible: bool = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, _offset, _size, **kwargs):
         self.property_name = None
-        self.visible = kwargs.pop('visible', None)
-        if self.visible is not None:
-            self.is_instance = True
+        self.instance_fields = []
+        self.offset = _offset
+        self.size = _size
+        self.computed_offset = self.offset if isinstance(self.offset, int) else 0
+        self.size_includes_computation = False
 
     def get_size(self, byte_struct):
         '''
         Gets the size of the ByteField, provided the ByteStruct. You may override this method
-        if you the size of your field depends on the parent ByteStruct.
+        if the size of your field depends on the parent ByteStruct.
 
         Args:
             byte_struct (ByteStruct): the ByteStruct that the size is calculated for
@@ -121,6 +133,10 @@ class ByteField(ABC):
         Returns:
             the size of this field in bytes
         '''
+        if self.is_instance:
+            data = byte_struct._get_instance_data(self)
+            return data['size']
+
         return self.size
 
     @abstractmethod
@@ -149,7 +165,7 @@ class ByteField(ABC):
         '''
         pass
 
-    def resize(self, length):
+    def resize(self, length, byte_struct):
         '''
         The resize method is called when the user requests that this field should
         be resized. Note that you should never call this method directly on the field,
@@ -169,62 +185,6 @@ class ByteField(ABC):
         '''
         pass
 
-    @property
-    def min_offset(self):
-        '''
-        Gets the minimum offset of this field in bytes, excluding any invisible fields.
-        For more details, see ByteField.get_min_offset.
-
-        Returns:
-            int: the minimum offset of this field in the parent ByteStruct, in bytes
-        '''
-        return self.get_min_offset()
-
-    def get_min_offset(self, exclude_invisible: bool = True):
-        '''
-        Gets the minimum offset of this field in bytes.
-
-        Translates the offset field and recurses until
-        a constant offset is encountered. This method
-        allows you to count invisible fields as if they were
-        visible in the struct. The offset returned may not be
-        the real offset with instance fields present in the structure.
-        To obtain the real offset, call byte_struct.calc_offset(field).
-
-        Args:
-            exclude_invisible (bool): whether to exclude invisible fields, True by default
-
-        Returns:
-            int: the minimum offset of this field in the parent ByteStruct, in bytes
-        '''
-        return _translate_offset(self.offset, exclude_invisible)
-
-    def _get_instance_value(self, byte_struct):
-        '''
-        Same as _getvalue, but calls the method on a field inside ByteStruct instance.
-        Only used in class type generation.
-
-        Args:
-            byte_struct (ByteStruct): the ByteStruct that the value is retrieved from
-
-        Returns:
-            the value that was retrieved
-        '''
-        byte_struct._ensure_is_instanced(self)
-        return getattr(byte_struct, self.property_name)._getvalue(byte_struct)
-
-    def _set_instance_value(self, byte_struct, value):
-        '''
-        Same as _setvalue, but calls the method on a field inside ByteStruct instance.
-        Only used in class type generation.
-
-        Args:
-            byte_struct (ByteStruct): the ByteStruct that the value is set in
-            value: the value that is being used to set the field
-        '''
-        byte_struct._ensure_is_instanced(self)
-        return getattr(byte_struct, self.property_name)._setvalue(byte_struct, value)
-
     def _resize_with_data(self, byte_struct, value):
         '''
         Resizes the field including resizing the underlying
@@ -234,30 +194,16 @@ class ByteField(ABC):
         value: the value to resize to
         '''
         old_size = self.get_size(byte_struct)
-        self.resize(value)
+        self.resize(value, byte_struct)
         if old_size != self.get_size(byte_struct):
             byte_struct._resize_data(self, old_size)
 
 
-def _translate_offset(offset: Tuple[ByteField, int], exclude_invisible: bool = True) -> int:
-    '''
-    Used by ByteField.get_min_offset to calculate the offset.
+class InstanceData:
+    size: int
 
-    Args:
-        offset (Tuple[ByteField, int]): if ByteField, calculates the offset of the field,
-                                          if int, returns this argument
-        exclude_invisible (bool): whether to exclude invisible fields, True by default
-
-    Returns:
-        int: the minimum offset in bytes
-    '''
-    if isinstance(offset, int):
-        return offset
-
-    if exclude_invisible and offset.visible is False:
-        return offset.min_offset
-
-    return offset.min_offset + offset.size
+    def __init__(self) -> None:
+        self.size = 0
 
 
 class ByteStruct(metaclass=StructBase):
@@ -302,6 +248,7 @@ class ByteStruct(metaclass=StructBase):
             self.data = bytearray(self.min_size)
 
         self.master_offset = master_offset
+        self.instance_data = {}
 
         for key in kwargs:
             setattr(self, key, kwargs[key])
@@ -331,11 +278,22 @@ class ByteStruct(metaclass=StructBase):
         if not self.__class__.last_field:
             return 0
 
-        last_field = self._ensure_is_instanced(self.__class__.last_field)
-        if not last_field:
-            return 0
+        return self.calc_field_offset(self.__class__.last_field) + self.__class__.last_field.get_size(self)
 
-        return self.calc_field_offset(last_field) + last_field.get_size(self)
+    def _get_instance_data(self, field: ByteField) -> InstanceData:
+        '''
+        Gets the instance data for a field.
+
+        Args:
+            field (ByteField): the field to get the instance data for
+
+        Returns:
+            InstanceData: the instance data for the field
+        '''
+        if field not in self.instance_data:
+            self.instance_data[field] = {'size': 0}
+
+        return self.instance_data[field]
 
     def resize(self, field: ByteField, size, resize_bytes: bool = False):
         '''
@@ -378,9 +336,8 @@ class ByteStruct(metaclass=StructBase):
         if not field.is_instance:
             raise Exception('non instance fields cannot be resized')
 
-        field = self._ensure_is_instanced(field)
         old_size = field.get_size(self)
-        field.resize(size)
+        field.resize(size, self)
         if resize_bytes:
             self._resize_data(field, old_size)
 
@@ -469,7 +426,7 @@ class ByteStruct(metaclass=StructBase):
         '''
         return self.master_offset + self.calc_field_offset(byte_field)
 
-    def calc_field_offset(self, field: ByteField) -> int:
+    def calc_field_offset(self, byte_field: ByteField) -> int:
         '''
         Calculates the real offset for the provided field.
 
@@ -481,13 +438,9 @@ class ByteStruct(metaclass=StructBase):
         Returns:
             int: the calculated offset in bytes, without the master offset
         '''
-        if isinstance(field.offset, int):
-            return field.offset
-
-        instance_offset = self._ensure_is_instanced(field.offset)
-        instance_offset._getvalue(self)
-        # instance_offset = getattr(self, field.offset.property_name)
-        return self.calc_field_offset(instance_offset) + instance_offset.get_size(self)
+        return byte_field.computed_offset + sum(
+            [instance_field.get_size(self) for instance_field in byte_field.instance_fields]
+        )
 
     def _print(self, indent_level: int) -> str:
         '''
@@ -512,39 +465,36 @@ class ByteStruct(metaclass=StructBase):
             except AttributeError:
                 continue
 
-            if field.visible == False:  # NOQA
-                r += f'{tab}{varname}: (hidden)\n'
+            try:
+                field_val = getattr(self, varname)
+            except Exception as e:
+                r += f'{tab}{varname}: [ reading error ({e.__class__.__name__}) ]\n'
+                continue
+
+            if isinstance(field_val, ByteStruct):
+                r += f'{tab}{varname} ({field_val.__class__.__name__}):\n{field_val._print(indent_level + 1)}'
+            elif isinstance(field_val, (bytearray, bytes, bytefields.array_proxy.ByteArrayFieldProxy)):
+                if isinstance(field_val, bytefields.array_proxy.ByteArrayFieldProxy):
+                    field_val = field_val.to_bytearray()
+
+                bytes_repr = _format_bytearray(field_val)
+                r += f'{tab}{varname} ({field_val.__class__.__name__}): {bytes_repr}'
+            elif isinstance(field_val, (np.ndarray, list, bytefields.array_proxy.ArrayFieldProxy)):
+                arr_repr = ''
+
+                if isinstance(field_val, bytefields.array_proxy.ArrayFieldProxy):
+                    field_val = field_val.to_numpy()
+
+                arr_repr = _format_numpy(field_val)
+                if len(field_val) > 0:
+                    arr_repr = arr_repr.replace('\n', f'\n{tab}\t')
+
+                r += f'{tab}{varname} ({field_val.__class__.__name__}): {arr_repr}'
             else:
-                try:
-                    field_val = getattr(self, varname)
-                except Exception as e:
-                    r += f'{tab}{varname}: [ reading error ({e.__class__.__name__}) ]'
-                    continue
+                r += f'{tab}{varname} ({field_val.__class__.__name__}): {field_val}'
 
-                if isinstance(field_val, ByteStruct):
-                    r += f'{tab}{varname} ({field_val.__class__.__name__}):\n{field_val._print(indent_level + 1)}'
-                elif isinstance(field_val, (bytearray, bytes, bytefields.array_proxy.ByteArrayFieldProxy)):
-                    if isinstance(field_val, bytefields.array_proxy.ByteArrayFieldProxy):
-                        field_val = field_val.to_bytearray()
-
-                    bytes_repr = _format_bytearray(field_val)
-                    r += f'{tab}{varname} ({field_val.__class__.__name__}): {bytes_repr}'
-                elif isinstance(field_val, (np.ndarray, list, bytefields.array_proxy.ArrayFieldProxy)):
-                    arr_repr = ''
-
-                    if isinstance(field_val, bytefields.array_proxy.ArrayFieldProxy):
-                        field_val = field_val.to_numpy()
-
-                    arr_repr = _format_numpy(field_val)
-                    if len(field_val) > 0:
-                        arr_repr = arr_repr.replace('\n', f'\n{tab}\t')
-
-                    r += f'{tab}{varname} ({field_val.__class__.__name__}): {arr_repr}'
-                else:
-                    r += f'{tab}{varname} ({field_val.__class__.__name__}): {field_val}'
-
-                if field.property_name != self.__class__.last_field.property_name:
-                    r += '\n'
+            if field.property_name != self.__class__.last_field.property_name:
+                r += '\n'
 
         return r
 

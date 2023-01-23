@@ -470,11 +470,21 @@ class ArrayField(ByteField):
 
         if shape:
             self.shape = (shape,) if isinstance(shape, int) else shape[:]
+            self.is_instance = False
         else:
             self.shape = (0,)
-        self.is_instance = True
+            self.is_instance = True
 
         super().__init__(offset, self._elem_field.size * int(np.prod(self.shape)), **kwargs)
+
+    def get_size(self, byte_struct):
+        shape = self.shape
+        if self.is_instance:
+            data = byte_struct._get_instance_data(self)
+            if 'shape' in data:
+                shape = data['shape']
+
+        return self._elem_field.get_size(byte_struct) * int(np.prod(shape))
 
     def resize(self, shape: Tuple[tuple, int], byte_struct):
         data = byte_struct._get_instance_data(self)

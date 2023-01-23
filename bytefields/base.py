@@ -30,7 +30,6 @@ class StructBase(type):
       None if there are no fields in the subclass
     '''
     def __new__(cls, name, bases, attrs):
-        struct_size = 0
         last_field = None
 
         instance_fields = []
@@ -46,7 +45,11 @@ class StructBase(type):
             field.property_name = f'{key}_field'
             attrs[key] = property(field._getvalue, field._setvalue)
 
-            if last_field is None:
+            if isinstance(field.offset, int):
+                field.computed_offset = field.offset
+                instance_fields = []
+            elif last_field is None:
+                assert field.offset is None or isinstance(field.offset, int), 'first field must have an integer offset or None'
                 field.computed_offset = field.offset if field.offset else 0
             else:
                 field.computed_offset = last_field.computed_offset
@@ -55,19 +58,22 @@ class StructBase(type):
 
             field.instance_fields = instance_fields[:]
 
+            attrs[field.property_name] = field
+
             if field.is_instance:
                 instance_fields.append(field)
 
-            attrs[field.property_name] = field
-            new_size = field.computed_offset + field.size
-            if last_field and last_field.size_includes_computation:
-                new_size += last_field.size
-
-            struct_size = max(struct_size, new_size)
-
             last_field = field
 
-        attrs['min_size'] = struct_size
+        if last_field:
+            new_size = last_field.computed_offset + last_field.size
+
+            if last_field.is_instance:
+                instance_fields = instance_fields[:-1]
+
+            new_size += sum(f.size for f in instance_fields if f.size_includes_computation)
+            attrs['min_size'] = new_size
+
         attrs['last_field'] = last_field
         return super(StructBase, cls).__new__(cls, name, bases, attrs)
 

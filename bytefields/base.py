@@ -33,12 +33,13 @@ class StructBase(type):
         last_field = None
 
         instance_fields = []
+        instance_with_parent_field_names = []
 
         for key, field in attrs.copy().items():
             if not isinstance(field, ByteField):
                 continue
 
-            if key == 'data' or key == 'master_offset' or key == 'size':
+            if key in ['data', 'master_offset', 'size', 'instance_with_parent_field_names']:
                 raise KeyError(f'a field cannot have a name of "{key}". '
                                'To resolve, rename the field to something else')
 
@@ -60,6 +61,9 @@ class StructBase(type):
 
             attrs[field.property_name] = field
 
+            if field.instance_with_parent:
+                instance_with_parent_field_names.append(key)
+
             if field.is_instance:
                 instance_fields.append(field)
 
@@ -75,6 +79,7 @@ class StructBase(type):
             attrs['min_size'] = new_size
 
         attrs['last_field'] = last_field
+        attrs['instance_with_parent_field_names'] = instance_with_parent_field_names
         return super(StructBase, cls).__new__(cls, name, bases, attrs)
 
 
@@ -91,10 +96,6 @@ class ByteField(ABC):
     or another instance of ByteField, which means that this field directly follows
     that instance offset.
 
-    Additionally, a field may be invisible. If a field is invisible, it is
-    not taken account into offset calculation, therefore any later fields are
-    accessed as if the invisible field did not exist.
-
     Attributes:
         offset (Tuple[ByteField, int]): the offset of this field in bytes.
                                         The offset may be None, constant integer byte offset,
@@ -106,11 +107,6 @@ class ByteField(ABC):
                             ByteStruct instance.
         property_name (str): the property name of this field. This is the field name
                              in the ByteStruct class.
-        visible (bool): if the field is visible. By default, this value is None,
-                        which means that the field cannot change visibility.
-                        Setting the value explicitly to True or False at instantiation
-                        will result in the field being instance based and enable
-                        toggling its visibility.
     '''
     offset: Tuple[object, int]
     computed_offset: int
@@ -127,6 +123,7 @@ class ByteField(ABC):
         self.size = _size
         self.computed_offset = self.offset if isinstance(self.offset, int) else 0
         self.size_includes_computation = False
+        self.instance_with_parent = kwargs.pop('instance_with_parent', False)
 
     def get_size(self, byte_struct):
         '''
@@ -258,6 +255,9 @@ class ByteStruct(metaclass=StructBase):
 
         for key in kwargs:
             setattr(self, key, kwargs[key])
+
+        for field_name in self.__class__.instance_with_parent_field_names:
+            getattr(self, field_name)
 
     @property
     def size(self):

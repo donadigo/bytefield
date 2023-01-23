@@ -52,9 +52,9 @@ class StructField(ByteField):
             offset (Tuple[ByteField, int]): the offset of this field
             struct_type (type): the ByteStruct type that this field holds
     '''
-    def __init__(self, struct_type: type, offset: Tuple[ByteField, int] = None, **kwargs):
+    def __init__(self, struct_type: type, offset: Tuple[ByteField, int] = None, instance_with_parent: bool = True, **kwargs):
         assert issubclass(struct_type, ByteStruct), 'struct_type must be an inheritant of type ByteStruct'
-        super().__init__(offset, struct_type.min_size, **kwargs)
+        super().__init__(offset, struct_type.min_size, instance_with_parent=instance_with_parent, **kwargs)
         self.struct_type = struct_type
         self.offset = offset
         self.is_instance = True
@@ -557,6 +557,8 @@ class VariableField(ByteField):
         data['child'] = child
         data['child'].computed_offset = self.computed_offset
         data['size'] = child.get_size(byte_struct)
+        if child.instance_with_parent:
+            child._getvalue(byte_struct)
 
     def _getvalue(self, byte_struct: ByteStruct):
         data = byte_struct._get_instance_data(self)

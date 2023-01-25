@@ -1,10 +1,9 @@
-from bytefields.array_proxy import ArrayFieldProxy, ByteArrayFieldProxy, _get_array_index
-from copy import deepcopy
+from bytefield.array_proxy import ArrayFieldProxy, ByteArrayFieldProxy, _get_array_index
+from bytefield.base import ByteStruct, ByteField
 from enum import Enum
 import struct
 from typing import Iterable, Tuple
 import numpy as np
-from bytefields.base import ByteStruct, ByteField
 
 
 class StructField(ByteField):
@@ -52,7 +51,12 @@ class StructField(ByteField):
             offset (Tuple[ByteField, int]): the offset of this field
             struct_type (type): the ByteStruct type that this field holds
     '''
-    def __init__(self, struct_type: type, offset: Tuple[ByteField, int] = None, instance_with_parent: bool = True, **kwargs):
+    def __init__(
+        self,
+        struct_type: type,
+        offset: Tuple[ByteField, int] = None,
+        instance_with_parent: bool = True, **kwargs
+    ):
         assert issubclass(struct_type, ByteStruct), 'struct_type must be an inheritant of type ByteStruct'
         super().__init__(offset, struct_type.min_size, instance_with_parent=instance_with_parent, **kwargs)
         self.struct_type = struct_type

@@ -1,14 +1,14 @@
-![Build Status](https://github.com/donadigo/bytefields/workflows/Build/badge.svg)
-# ByteFields
-A Python library for parsing/manipulating binary data with easily accessible Python properties inspired by Django. The library is still in development. ByteFields supports:
+![Build Status](https://github.com/donadigo/bytefield/workflows/Build/badge.svg)
+# ByteField
+A Python library for parsing/manipulating binary data with easily accessible Python properties inspired by Django. The library is still in development. ByteField supports:
 * Variable length fields
 * Nested structures
 * Parsing only accessed fields
 
 ## Quick example
-ByteFields allows to define binary data layout declaratively which then maps to underlying bytes:
+ByteField allows to define binary data layout declaratively which then maps to underlying bytes:
 ```py
-from bytefields import *
+from bytefield import *
 
 class Header(ByteStruct):
     magic = StringField(length=5)
@@ -30,7 +30,7 @@ bytearray(b'bytes\x03\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x0
 ## Example: parse a JPEG header
 You can embed other structure declarations inside structures:
 ```py
-from bytefields import *
+from bytefield import *
 
 class RGB(ByteStruct):
     r = IntegerField(signed=False, size=1)
@@ -69,7 +69,7 @@ with open('image.jpg', 'rb') as f:
 ## Writing custom struct logic
 You can create high-level structures which define their own behavior depending on the data contained within the struct:
 ```py
-from bytefields import *
+from bytefield import *
 
 class DynamicFloatArray(ByteStruct):
     length = IntegerField(signed=False)
@@ -92,9 +92,9 @@ array_data (ndarray): [1.0 2.0 3.0]
 ```
 
 ## Variable fields
-Bytefields supports fields with unknown type/size:
+Bytefield supports fields with unknown type/size:
 ```py
-from bytefields import *
+from bytefiel import *
 
 TYPE_INTEGER = 0
 TYPE_FLOAT = 1

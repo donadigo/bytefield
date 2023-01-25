@@ -1,6 +1,6 @@
 import struct
 import numpy as np
-from bytefields import *
+from bytefield import *
 
 
 def test_pack_value():

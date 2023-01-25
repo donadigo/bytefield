@@ -1,11 +1,11 @@
 
 from abc import ABC, abstractmethod
-import bytefields.fields
+import bytefield.fields
 from copy import deepcopy
 from typing import Iterable, Tuple
 import numpy as np
-import bytefields.array_proxy
-from bytefields.format import _format_bytearray, _format_numpy
+import bytefield.array_proxy
+from bytefield.format import _format_bytearray, _format_numpy
 
 
 class StructBase(type):
@@ -50,7 +50,8 @@ class StructBase(type):
                 field.computed_offset = field.offset
                 instance_fields = []
             elif last_field is None:
-                assert field.offset is None or isinstance(field.offset, int), 'first field must have an integer offset or None'
+                assert field.offset is None or isinstance(field.offset, int), \
+                    'first field must have an integer offset or None'
                 field.computed_offset = field.offset if field.offset else 0
             else:
                 field.computed_offset = last_field.computed_offset
@@ -479,16 +480,16 @@ class ByteStruct(metaclass=StructBase):
 
             if isinstance(field_val, ByteStruct):
                 r += f'{tab}{varname} ({field_val.__class__.__name__}):\n{field_val._print(indent_level + 1)}'
-            elif isinstance(field_val, (bytearray, bytes, bytefields.array_proxy.ByteArrayFieldProxy)):
-                if isinstance(field_val, bytefields.array_proxy.ByteArrayFieldProxy):
+            elif isinstance(field_val, (bytearray, bytes, bytefield.array_proxy.ByteArrayFieldProxy)):
+                if isinstance(field_val, bytefield.array_proxy.ByteArrayFieldProxy):
                     field_val = field_val.to_bytearray()
 
                 bytes_repr = _format_bytearray(field_val)
                 r += f'{tab}{varname} ({field_val.__class__.__name__}): {bytes_repr}'
-            elif isinstance(field_val, (np.ndarray, list, bytefields.array_proxy.ArrayFieldProxy)):
+            elif isinstance(field_val, (np.ndarray, list, bytefield.array_proxy.ArrayFieldProxy)):
                 arr_repr = ''
 
-                if isinstance(field_val, bytefields.array_proxy.ArrayFieldProxy):
+                if isinstance(field_val, bytefield.array_proxy.ArrayFieldProxy):
                     field_val = field_val.to_numpy()
 
                 arr_repr = _format_numpy(field_val)

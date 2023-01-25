@@ -1,5 +1,5 @@
-from bytefields.format import _format_bytearray, _format_numpy
-from bytefields import base, fields
+from bytefield.format import _format_bytearray, _format_numpy
+from bytefield import base, fields
 import numpy as np
 
 

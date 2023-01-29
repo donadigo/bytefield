@@ -6,7 +6,7 @@ long_description = (this_directory / 'README.md').read_text()
 setup(
     name="bytefield",
     packages=find_packages(exclude=["tests*"]),
-    version="1.0.1",
+    version="1.0.2",
     license="MIT",
     description="Parse binary data using declarative field layout and native Python properties",
     long_description=long_description,

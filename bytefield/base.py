@@ -254,11 +254,13 @@ class ByteStruct(metaclass=StructBase):
         self.master_offset = master_offset
         self.instance_data = {}
 
-        for key in kwargs:
-            setattr(self, key, kwargs[key])
+        if kwargs:
+            for key in kwargs:
+                setattr(self, key, kwargs[key])
 
-        for field_name in self.__class__.instance_with_parent_field_names:
-            getattr(self, field_name)
+        if self.__class__.instance_with_parent_field_names:
+            for field_name in self.__class__.instance_with_parent_field_names:
+                getattr(self, field_name)
 
     @property
     def size(self):
@@ -445,9 +447,12 @@ class ByteStruct(metaclass=StructBase):
         Returns:
             int: the calculated offset in bytes, without the master offset
         '''
-        return byte_field.computed_offset + sum(
-            [instance_field.get_size(self) for instance_field in byte_field.instance_fields]
-        )
+        if byte_field.instance_fields:
+            return byte_field.computed_offset + sum(
+                [instance_field.get_size(self) for instance_field in byte_field.instance_fields]
+            )
+
+        return byte_field.computed_offset
 
     def _print(self, indent_level: int) -> str:
         '''

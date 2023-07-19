@@ -2,6 +2,7 @@ from bytefield.array_proxy import ArrayFieldProxy, ByteArrayFieldProxy, _get_arr
 from bytefield.base import ByteStruct, ByteField
 from enum import Enum
 import struct
+import math
 from typing import Iterable, Tuple
 import numpy as np
 
@@ -479,7 +480,7 @@ class ArrayField(ByteField):
             self.shape = (0,)
             self.is_instance = True
 
-        super().__init__(offset, self._elem_field.size * int(np.prod(self.shape)), **kwargs)
+        super().__init__(offset, self._elem_field.size * int(math.prod(self.shape)), **kwargs)
 
     def get_size(self, byte_struct):
         shape = self.shape
@@ -488,12 +489,12 @@ class ArrayField(ByteField):
             if 'shape' in data:
                 shape = data['shape']
 
-        return self._elem_field.get_size(byte_struct) * int(np.prod(shape))
+        return self._elem_field.get_size(byte_struct) * int(math.prod(shape))
 
     def resize(self, shape: Tuple[tuple, int], byte_struct):
         data = byte_struct._get_instance_data(self)
         data['shape'] = (shape,) if isinstance(shape, int) else shape[:]
-        data['size'] = self._elem_field.get_size(byte_struct) * int(np.prod(data['shape']))
+        data['size'] = self._elem_field.get_size(byte_struct) * int(math.prod(data['shape']))
 
     def _getvalue(self, byte_struct: ByteStruct) -> np.array:
         return ArrayFieldProxy(byte_struct, self)

@@ -345,7 +345,8 @@ class ByteStruct(metaclass=StructBase):
         if not field.is_instance:
             raise Exception('non instance fields cannot be resized')
 
-        old_size = field.get_size(self)
+        if resize_bytes:
+            old_size = field.get_size(self)
         field.resize(size, self)
         if resize_bytes:
             self._resize_data(field, old_size)
